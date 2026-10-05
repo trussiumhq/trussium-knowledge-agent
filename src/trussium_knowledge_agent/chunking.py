@@ -19,6 +19,9 @@ class Chunk:
     chunk_index: int
     content_hash: str
     content: str
+    embedding: tuple[float, ...] | None = None
+    embedding_provider: str | None = None
+    embedding_model: str | None = None
 
 
 def _slugify(heading: str) -> str:

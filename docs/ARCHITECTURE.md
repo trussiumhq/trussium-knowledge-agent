@@ -40,19 +40,19 @@ remain configured on the runtime.
 3. Source metadata and chunks are replaced in a single PostgreSQL transaction.
    Re-indexing unchanged content does not create duplicates; a failed index
    leaves the last successful corpus intact.
-4. The application requests embeddings from the configured Trussium runtime and
-   stores vectors alongside chunks and metadata in PostgreSQL.
-5. For a question, the application embeds the query, retrieves a bounded set of
-   matching chunks, and may ask Trussium to rerank that set.
-6. The app sends only the selected passages and question to chat. Its response
-   includes links to source files and headings; if evidence is insufficient it
-   should say so.
+4. The indexer batches chunk text to the configured Trussium embeddings API,
+   validates response order and vector identity, and stores vectors together
+   with provider, resolved model, and dimension metadata.
+5. For a query, the application requests one embedding and retrieves up to 20
+   nearest passages by exact cosine similarity. Results are filtered to the
+   same provider/model/dimension and include source metadata and a score.
+6. A future answer flow will send selected passages and the question to chat.
+   Its response will include links to source files and headings, and state when
+   evidence is insufficient.
 
 Ingestion is repeatable and idempotent for an explicitly selected local source.
 Only Markdown is supported initially. Other formats and external connectors
-require separate parser, access-control, and deletion decisions. The initial
-chunk store does not create embeddings; vector dimensions and model identity
-will be persisted as part of the Trussium embedding integration.
+require separate parser, access-control, and deletion decisions.
 
 The first implementation stores only a SHA-256 identifier derived from the
 canonical local source path, not the absolute path itself. It records the
@@ -61,6 +61,21 @@ relative paths, heading paths/anchors, and deterministic chunk IDs. Index
 replacement and migration application run in one database transaction. A
 Markdown file larger than 5 MiB or one that is not valid UTF-8 causes indexing
 to fail before database state is changed. `.git` metadata is excluded.
+
+Vectors are stored in pgvector's variable-dimension `vector` type. Each row
+records provider, resolved model, and dimension, and retrieval filters on all
+three before comparing vectors. The initial corpus uses exact cosine search;
+it does not add an approximate index before model dimensions and measured corpus
+size justify one. The pgvector extension must be provisioned before the
+application migration runs: Compose enables it during database initialization,
+CI enables it for its PostgreSQL service, and external database operators must
+enable the extension with an appropriately privileged role.
+
+The CLI uses Trussium's stable HTTP embeddings contract rather than depending
+on a Git-sourced SDK package. The runtime URL and model are operator
+configuration. Requests use a bounded configurable timeout (30 seconds by
+default, at most 120 seconds); no provider-specific endpoint is called by this
+application.
 
 ## Agent workflow
 
