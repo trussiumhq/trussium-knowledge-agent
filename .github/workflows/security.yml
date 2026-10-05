@@ -1,0 +1,34 @@
+name: Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "31 7 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-audit:
+    name: Audit locked dependencies
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+      - name: Export locked dependencies
+        run: uv export --locked --all-groups --format requirements-txt --no-emit-project --output-file /tmp/requirements.txt
+      - name: Audit dependencies
+        uses: pypa/gh-action-pip-audit@v1.1.0
+        with:
+          inputs: /tmp/requirements.txt
