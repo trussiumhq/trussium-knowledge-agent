@@ -41,6 +41,15 @@ jobs:
         uses: astral-sh/setup-uv@v7
       - name: Install locked dependencies
         run: uv sync --locked --all-groups
+      - name: Enable pgvector for integration tests
+        run: |
+          uv run python - <<'PY'
+          import os
+          import psycopg
+
+          with psycopg.connect(os.environ["DATABASE_URL"], autocommit=True) as connection:
+              connection.execute("CREATE EXTENSION IF NOT EXISTS vector")
+          PY
       - name: Validate local services
         run: docker compose --env-file .env.example config --quiet
       - name: Check formatting
