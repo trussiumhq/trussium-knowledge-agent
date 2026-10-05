@@ -1,0 +1,34 @@
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "trussium-knowledge-agent"
+version = "0.1.0"
+description = "Open source RAG and bounded agent reference application for Trussium."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.34.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/trussium_knowledge_agent"]
+
+[dependency-groups]
+dev = [
+    "httpx2",
+    "mypy>=1.17.0",
+    "pytest>=8.4.1",
+    "ruff>=0.12.5",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
