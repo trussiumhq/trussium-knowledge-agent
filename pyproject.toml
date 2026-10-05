@@ -10,8 +10,12 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115.0",
+    "psycopg[binary]>=3.2.0",
     "uvicorn[standard]>=0.34.0",
 ]
+
+[project.scripts]
+trussium-knowledge-agent = "trussium_knowledge_agent.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/trussium_knowledge_agent"]

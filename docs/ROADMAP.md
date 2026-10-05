@@ -5,7 +5,7 @@ ship as a small, reviewable change with tests and user documentation.
 
 ## Milestone 0 — Repository foundation
 
-Status: in progress.
+Status: complete.
 
 - Establish project purpose, architecture, trust boundaries, and ADRs.
 - Provide a Python 3.12+ `uv` project and a minimal FastAPI health endpoint.
@@ -13,21 +13,27 @@ Status: in progress.
 - Add CI, dependency/source security checks, contribution guidance, and
   reproducible local setup instructions.
 
-Exit criteria: fresh clone can install, start PostgreSQL and the app, receive a
-successful liveness response, and pass all CI checks.
+Exit criteria: a fresh clone can install, configure PostgreSQL and the app,
+receive a successful liveness response, and pass all CI checks. PostgreSQL
+container startup was validated in CI; local validation depends on Docker being
+available.
 
 ## Milestone 1 — Markdown RAG
 
-Planned:
+In progress. The next implementation slice is tracked in
+[issue #3](https://github.com/trussiumhq/trussium-knowledge-agent/issues/3).
 
-- Index an explicitly selected local Markdown repository.
-- Preserve repository revision, relative file path, heading anchor, and content
-  hash for each chunk.
-- Make ingestion idempotent and support deleting/rebuilding an index.
+- [ ] Safely ingest explicitly selected local Markdown repositories and
+  transactionally persist heading-aware chunks and source metadata.
+- [ ] Add deterministic migrations and documented index, re-index, and removal
+  commands.
+
+Remaining planned work:
+
 - Use Trussium embeddings and PostgreSQL/pgvector retrieval; expose retrieval
   scores and source links.
 - Answer with grounded citations and a clear insufficient-evidence response.
-- Provide CLI commands and a usable browser question/search interface.
+- Provide a usable browser question/search interface.
 - Include a small evaluation corpus for retrieval relevance and citation
   correctness.
 

@@ -5,10 +5,10 @@ Markdown repository and reviewing documentation maintenance findings. It
 demonstrates retrieval augmented generation (RAG) and bounded, explicitly
 registered agent tools using Trussium.
 
-The project is at its foundation stage. The first change establishes the
-application shell, local development environment, architecture, security
-boundaries, and roadmap. Document indexing, cited answers, and the audit agent
-are planned milestones.
+The project is implementing its first Markdown indexing milestone. The
+repository currently provides the application shell and local development
+environment; indexing and later RAG/agent capabilities are being delivered in
+reviewable steps. See the [roadmap](docs/ROADMAP.md) for current status.
 
 ## Planned architecture
 
@@ -45,7 +45,26 @@ uv run uvicorn trussium_knowledge_agent.app:app --reload --port 8000
 
 The starter service exposes `GET http://127.0.0.1:8000/health/live`. PostgreSQL
 with pgvector is available at `127.0.0.1:5433`; its data is stored in a named
-Docker volume. The starter service does not yet connect to the database.
+Docker volume. The application does not contact a Trussium runtime until
+inference features are implemented.
+
+### Index a Markdown repository
+
+Set `DATABASE_URL` in `.env` to the local database DSN shown in
+`.env.example`, then index a repository:
+
+```bash
+uv run --env-file .env trussium-knowledge-agent index /path/to/markdown-repo
+uv run --env-file .env trussium-knowledge-agent remove /path/to/markdown-repo
+```
+
+The CLI applies pending versioned schema migrations automatically.
+Indexing is explicit and local. It skips symlinks and does not read outside the
+selected root. Re-indexing replaces that source's chunks transactionally;
+removing an index deletes its stored source and chunks. Markdown files over
+5 MiB or invalid UTF-8 abort the operation before database state changes. Git
+metadata is optional; when available the checked-out `HEAD` is recorded. The
+runtime's embedding and answer APIs are not part of this ingestion slice yet.
 
 ### Development checks
 
