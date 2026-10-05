@@ -33,20 +33,34 @@ remain configured on the runtime.
 ## Retrieval flow
 
 1. A user explicitly chooses a local Markdown repository and starts indexing.
-2. The indexer reads supported files beneath that configured root, records the
-   repository revision and content hash, and splits content while preserving
-   file paths and heading anchors.
-3. The application requests embeddings from the configured Trussium runtime and
-   stores chunks, metadata, and vectors in PostgreSQL.
-4. For a question, the application embeds the query, retrieves a bounded set of
+2. The indexer reads Markdown files beneath that configured root without
+   following symlinks, records the optional Git revision and source content
+   hash, and splits content while preserving relative paths and heading
+   anchors.
+3. Source metadata and chunks are replaced in a single PostgreSQL transaction.
+   Re-indexing unchanged content does not create duplicates; a failed index
+   leaves the last successful corpus intact.
+4. The application requests embeddings from the configured Trussium runtime and
+   stores vectors alongside chunks and metadata in PostgreSQL.
+5. For a question, the application embeds the query, retrieves a bounded set of
    matching chunks, and may ask Trussium to rerank that set.
-5. The app sends only the selected passages and question to chat. Its response
+6. The app sends only the selected passages and question to chat. Its response
    includes links to source files and headings; if evidence is insufficient it
    should say so.
 
-Ingestion is repeatable and idempotent by source revision and content hash.
-Only Markdown is in the first ingestion milestone. Other formats and external
-connectors require separate parser, access-control, and deletion decisions.
+Ingestion is repeatable and idempotent for an explicitly selected local source.
+Only Markdown is supported initially. Other formats and external connectors
+require separate parser, access-control, and deletion decisions. The initial
+chunk store does not create embeddings; vector dimensions and model identity
+will be persisted as part of the Trussium embedding integration.
+
+The first implementation stores only a SHA-256 identifier derived from the
+canonical local source path, not the absolute path itself. It records the
+repository name, optional Git `HEAD` revision, per-file content hashes,
+relative paths, heading paths/anchors, and deterministic chunk IDs. Index
+replacement and migration application run in one database transaction. A
+Markdown file larger than 5 MiB or one that is not valid UTF-8 causes indexing
+to fail before database state is changed. `.git` metadata is excluded.
 
 ## Agent workflow
 
