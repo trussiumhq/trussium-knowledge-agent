@@ -16,10 +16,16 @@ This project is an early reference application. Do not expose it to untrusted
 networks with real documents or credentials until deployment hardening is
 complete. Index only a repository you are authorized to access. The indexer
 must stay beneath the explicitly selected root and ignore symbolic links.
-Indexing sends chunk text and search sends query text to the Trussium runtime
-configured by the operator; choose an endpoint whose privacy and retention
-behavior is acceptable for that content. Use TLS across untrusted networks and
-supply runtime credentials through a secret mechanism.
-Treat indexed content as untrusted input. Tools must be explicitly registered
-and bounded, and external writes require human approval. Never commit `.env`
-files, model credentials, or private document samples.
+Indexing sends chunk text, search sends query text, and `ask` sends the question
+and retrieved passages to the configured Trussium runtime. Choose endpoints
+whose privacy and retention behavior is acceptable for that content. Use TLS
+across untrusted networks and supply runtime credentials through a secret
+mechanism.
+
+Retrieved passages are untrusted data and may contain prompt-injection attempts.
+The answer flow directs the model to ignore embedded instructions, validates a
+constrained JSON response, and displays citations only when their IDs resolve
+to retrieved records. These checks reduce citation/link fabrication but do not
+guarantee factual accuracy or eliminate prompt injection. Tools must be
+explicitly registered and bounded, and external writes require human approval.
+Never commit `.env` files, model credentials, or private document samples.

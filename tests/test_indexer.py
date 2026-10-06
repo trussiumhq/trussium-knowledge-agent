@@ -8,6 +8,8 @@ from uuid import uuid4
 import psycopg
 import pytest
 
+from trussium_knowledge_agent.answers import answer_from_passages
+from trussium_knowledge_agent.chat import ChatCompletion
 from trussium_knowledge_agent.embeddings import EmbeddingsBatch
 from trussium_knowledge_agent.indexer import index_source, remove_index
 from trussium_knowledge_agent.retrieval import search_index
@@ -157,6 +159,34 @@ def test_search_does_not_compare_different_dimensions(tmp_path: Path) -> None:
 
     assert results
     assert {result.display_name for result in results} == {tmp_path.name}
+
+
+def test_grounded_answer_uses_postgres_retrieval_evidence(tmp_path: Path) -> None:
+    (tmp_path / "guide.md").write_text(
+        "# Backups\n\nRun a daily database backup and test restoration monthly.",
+        encoding="utf-8",
+    )
+    index_source(tmp_path, DATABASE_URL or "", _client(), "test-model")
+    passages = search_index("How often restore?", DATABASE_URL or "", _client(), "test-model")
+
+    class EvidenceChatClient:
+        def complete(self, *, model: str, messages: list[dict[str, str]]) -> ChatCompletion:
+            assert model == "chat-model"
+            assert "test restoration monthly" in messages[1]["content"]
+            return ChatCompletion(
+                "test-provider",
+                "resolved-chat-model",
+                '{"status":"answered","answer":"Test restoration monthly [C1].",'
+                '"citations":["C1"]}',
+                "stop",
+            )
+
+    answer = answer_from_passages(
+        "How often restore?", passages, EvidenceChatClient(), "chat-model"
+    )
+
+    assert answer.status == "answered"
+    assert answer.citations[0].source.relative_path == "guide.md"
 
 
 def test_embedding_failure_preserves_previous_index(tmp_path: Path) -> None:
