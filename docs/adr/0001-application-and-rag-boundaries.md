@@ -25,6 +25,9 @@ data and user experience into the runtime.
 - Introduce agent automation as deterministic, bounded workflows over
   explicitly registered tools. Start read-only and require human approval for
   external writes.
+- Expose cross-process tools only through an opt-in authenticated MCP endpoint
+  with fixed tool names, schemas, and read-only behavior; do not accept
+  request-selected destinations or dynamic registration.
 - Run the database locally through Docker Compose and bind its published port
   to loopback.
 
