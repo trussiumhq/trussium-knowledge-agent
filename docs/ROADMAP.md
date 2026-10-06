@@ -21,8 +21,8 @@ available.
 ## Milestone 1 — Markdown RAG
 
 In progress. Safe Markdown indexing, transactional chunk storage, embeddings,
-and semantic retrieval are complete. The grounded cited-answer slice is tracked
-in [issue #7](https://github.com/trussiumhq/trussium-knowledge-agent/issues/7).
+semantic retrieval, and grounded cited answers are complete. The remaining work
+is the browser question/search interface and an evaluation corpus.
 
 - [x] Safely ingest explicitly selected local Markdown repositories and
   transactionally persist heading-aware chunks and source metadata.
@@ -30,7 +30,7 @@ in [issue #7](https://github.com/trussiumhq/trussium-knowledge-agent/issues/7).
   commands.
 - [x] Call Trussium embeddings and store vectors with provider/model/dimension
   identity; add bounded exact-cosine retrieval with source citations.
-- [ ] Generate grounded answers with citations validated against retrieved
+- [x] Generate grounded answers with citations validated against retrieved
   sources and a clear insufficient-evidence response.
 
 Remaining planned work:
