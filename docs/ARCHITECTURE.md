@@ -21,6 +21,9 @@ Question → Trussium embeddings → similarity search → optional Trussium rer
                                                                │
                                                                ▼
                                              Trussium chat with cited passages
+                                                               │
+                                                               ▼
+                                           FastAPI answer API → browser citations
 
 Documentation audit → registered, bounded tools → report → human review
 ```
@@ -52,6 +55,10 @@ remain configured on the runtime.
    markers, and IDs; it formats source details from database metadata rather
    than trusting model-generated links. Empty retrieval or invalid output
    produces a fixed insufficient-evidence message.
+7. The browser uses the same bounded answer flow through `POST /api/ask`. The
+   API returns only the validated answer and stored citation metadata. Browser
+   rendering treats answer and source strings as text, not HTML; it displays
+   source paths and heading anchors without serving arbitrary local files.
 
 Ingestion is repeatable and idempotent for an explicitly selected local source.
 Only Markdown is supported initially. Other formats and external connectors

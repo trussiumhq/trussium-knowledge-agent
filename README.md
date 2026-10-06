@@ -7,14 +7,14 @@ registered agent tools using Trussium.
 
 The first milestone currently supports safe Markdown indexing, semantic
 retrieval, grounded answers with validated source citations, and a repeatable
-retrieval evaluation fixture. A browser interface and bounded agent tools are
-planned follow-on work. See the
+retrieval evaluation fixture, and a minimal browser question interface.
+Bounded agent tools are planned follow-on work. See the
 [roadmap](docs/ROADMAP.md) for current status.
 
 ## Architecture
 
-- FastAPI application and a planned browser interface, with a CLI for indexing,
-  searching, and asking grounded questions.
+- FastAPI browser interface for grounded questions, with a CLI for indexing,
+  searching, asking questions, and evaluating retrieval.
 - An existing Trussium runtime for chat, embeddings, and optional reranking.
 - PostgreSQL with pgvector for document chunks, source metadata, and vectors.
 - Local Markdown repositories as the first ingestion source.
@@ -43,13 +43,14 @@ provides model capabilities and controlled execution. See
 cp .env.example .env
 uv sync --all-groups
 docker compose up -d postgres
-uv run uvicorn trussium_knowledge_agent.app:app --reload --port 8000
+uv run --env-file .env uvicorn trussium_knowledge_agent.app:app --reload --port 8000
 ```
 
-The starter service exposes `GET http://127.0.0.1:8000/health/live`. PostgreSQL
-with pgvector is available at `127.0.0.1:5433`; its data is stored in a named
-Docker volume. The FastAPI shell currently provides liveness only. The indexing,
-semantic search, and answer commands call the separately configured Trussium
+Open `http://127.0.0.1:8000/` for the browser question interface. It requires
+an indexed corpus, PostgreSQL with pgvector at `127.0.0.1:5433`, and a reachable
+Trussium runtime. The service also exposes
+`GET http://127.0.0.1:8000/health/live`. PostgreSQL data is stored in a named
+Docker volume. The browser and CLI call the separately configured Trussium
 runtime APIs.
 
 ### Index and query a Markdown repository
@@ -92,7 +93,11 @@ correctness. Search uses
 exact cosine distance, filtered to the same resolved provider, model, and
 vector dimension used at indexing. If that model
 identity changes, re-index the source before searching with the new identity.
-Reranking and the browser interface remain planned.
+Reranking remains planned. The browser sends questions to the local FastAPI
+service; it shows the validated answer and source path/heading citations without
+exposing local source files as public URLs. See
+[`docs/WEB_INTERFACE.md`](docs/WEB_INTERFACE.md) for the HTTP contract,
+configuration, error states, and deployment boundary.
 
 The included retrieval evaluation fixture compares ranked source locations
 against expected `path#heading-anchor` citations. It reports Hit@k, Recall@k,

@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <title>Trussium Knowledge Agent</title>
+    <link rel="stylesheet" href="/static/app.css">
+    <script src="/static/app.js" defer></script>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="intro">
+        <p class="eyebrow">Trussium · Reference application</p>
+        <h1>Ask your documentation</h1>
+        <p class="lede">Get an answer grounded in your indexed Markdown sources, with citations you can verify.</p>
+      </header>
+
+      <form id="question-form" class="question-form">
+        <label for="question">Your question</label>
+        <textarea id="question" name="question" rows="4" maxlength="4000" required
+          placeholder="For example: How do I configure the runtime embedding model?"></textarea>
+        <div class="form-footer">
+          <label class="limit-label" for="limit">Evidence passages
+            <select id="limit" name="limit">
+              <option value="3">3</option>
+              <option value="5" selected>5</option>
+              <option value="8">8</option>
+              <option value="10">10</option>
+            </select>
+          </label>
+          <button id="submit" type="submit">Ask question</button>
+        </div>
+      </form>
+
+      <p id="status" class="status" role="status" aria-live="polite"></p>
+      <section id="result" class="result" aria-live="polite" hidden>
+        <h2 id="result-heading">Answer</h2>
+        <p id="answer" class="answer"></p>
+        <div id="citation-region" hidden>
+          <h3>Sources</h3>
+          <ol id="citations" class="citations"></ol>
+        </div>
+      </section>
+
+      <footer>
+        <p>Answers are limited to retrieved evidence. Check the cited source passages before relying on them.</p>
+      </footer>
+    </main>
+  </body>
+</html>
