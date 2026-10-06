@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "queries": [
+    {
+      "id": "postgres-port",
+      "query": "Which port does the local PostgreSQL database use?",
+      "expected": [{"path": "setup.md", "anchor": "database"}]
+    },
+    {
+      "id": "runtime-embedding-model",
+      "query": "How do I configure the runtime embedding model?",
+      "expected": [{"path": "setup.md", "anchor": "runtime"}]
+    },
+    {
+      "id": "index-command",
+      "query": "How can I index a Markdown source directory?",
+      "expected": [{"path": "indexing.md", "anchor": "index-a-source"}]
+    },
+    {
+      "id": "remove-command",
+      "query": "How do I remove an indexed repository?",
+      "expected": [{"path": "indexing.md", "anchor": "remove-a-source"}]
+    },
+    {
+      "id": "symlink-boundary",
+      "query": "Does indexing follow symlinks or read outside the selected directory?",
+      "expected": [{"path": "security.md", "anchor": "local-file-access"}]
+    },
+    {
+      "id": "runtime-data-flow",
+      "query": "What data is sent to the Trussium runtime?",
+      "expected": [{"path": "security.md", "anchor": "runtime-data-handling"}]
+    }
+  ]
+}
