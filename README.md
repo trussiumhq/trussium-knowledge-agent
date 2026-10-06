@@ -6,8 +6,9 @@ demonstrates retrieval augmented generation (RAG) and bounded, explicitly
 registered agent tools using Trussium.
 
 The first milestone currently supports safe Markdown indexing, semantic
-retrieval, and grounded answers with validated source citations. A browser
-interface and bounded agent tools are planned follow-on work. See the
+retrieval, grounded answers with validated source citations, and a repeatable
+retrieval evaluation fixture. A browser interface and bounded agent tools are
+planned follow-on work. See the
 [roadmap](docs/ROADMAP.md) for current status.
 
 ## Architecture
@@ -69,6 +70,8 @@ Index, search, ask a grounded question, and remove a repository:
 uv run --env-file .env trussium-knowledge-agent index /path/to/markdown-repo
 uv run --env-file .env trussium-knowledge-agent search "how do I configure retries?" --limit 5
 uv run --env-file .env trussium-knowledge-agent ask "How do I configure retries?" --limit 5
+uv run --env-file .env trussium-knowledge-agent index fixtures/evaluation-corpus
+uv run --env-file .env trussium-knowledge-agent evaluate fixtures/evaluation-queries.json --limit 5
 uv run --env-file .env trussium-knowledge-agent remove /path/to/markdown-repo
 ```
 
@@ -90,6 +93,12 @@ exact cosine distance, filtered to the same resolved provider, model, and
 vector dimension used at indexing. If that model
 identity changes, re-index the source before searching with the new identity.
 Reranking and the browser interface remain planned.
+
+The included retrieval evaluation fixture compares ranked source locations
+against expected `path#heading-anchor` citations. It reports Hit@k, Recall@k,
+and MRR@k; it does not judge generated answer quality. See
+[`docs/EVALUATION.md`](docs/EVALUATION.md) for setup, dataset limits, and
+interpretation guidance.
 
 ### Development checks
 

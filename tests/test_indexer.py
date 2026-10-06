@@ -11,6 +11,7 @@ import pytest
 from trussium_knowledge_agent.answers import answer_from_passages
 from trussium_knowledge_agent.chat import ChatCompletion
 from trussium_knowledge_agent.embeddings import EmbeddingsBatch
+from trussium_knowledge_agent.evaluation import EvaluationQuery, ExpectedPassage, evaluate_queries
 from trussium_knowledge_agent.indexer import index_source, remove_index
 from trussium_knowledge_agent.retrieval import search_index
 from trussium_knowledge_agent.store import fetch_source_chunks
@@ -131,6 +132,34 @@ def test_search_ranks_cosine_matches_and_filters_embedding_identity(tmp_path: Pa
     assert results[0].heading_anchor == "orchard"
     assert results[0].score == pytest.approx(1.0)
     assert other_model_results == []
+
+
+def test_evaluation_runs_against_indexed_retrieval(tmp_path: Path) -> None:
+    (tmp_path / "orchard.md").write_text(
+        "# Orchard\n\nGreen apple trees grow here.", encoding="utf-8"
+    )
+    (tmp_path / "ocean.md").write_text("# Ocean\n\nBlue ocean water is deep.", encoding="utf-8")
+    index_source(tmp_path, DATABASE_URL or "", _client(), "test-model")
+    dataset = (
+        EvaluationQuery(
+            "green-fruit",
+            "green apple",
+            (ExpectedPassage("orchard.md", "orchard"),),
+        ),
+    )
+
+    report = evaluate_queries(
+        dataset,
+        lambda query, limit: search_index(
+            query, DATABASE_URL or "", _client(), "test-model", top_k=limit
+        ),
+        limit=2,
+    )
+
+    assert report.hit_rate == 1.0
+    assert report.mean_recall == 1.0
+    assert report.mean_reciprocal_rank == 1.0
+    assert report.queries[0].retrieved[0] == "orchard.md#orchard"
 
 
 def test_search_does_not_compare_different_dimensions(tmp_path: Path) -> None:

@@ -21,8 +21,8 @@ available.
 ## Milestone 1 — Markdown RAG
 
 In progress. Safe Markdown indexing, transactional chunk storage, embeddings,
-semantic retrieval, and grounded cited answers are complete. The remaining work
-is the browser question/search interface and an evaluation corpus.
+semantic retrieval, grounded cited answers, and a retrieval evaluation corpus
+are complete. The remaining work is the browser question/search interface.
 
 - [x] Safely ingest explicitly selected local Markdown repositories and
   transactionally persist heading-aware chunks and source metadata.
@@ -32,12 +32,12 @@ is the browser question/search interface and an evaluation corpus.
   identity; add bounded exact-cosine retrieval with source citations.
 - [x] Generate grounded answers with citations validated against retrieved
   sources and a clear insufficient-evidence response.
+- [x] Include a bounded evaluation corpus and report retrieval Hit@k, Recall@k,
+  MRR@k, and per-query expected/retrieved citations.
 
 Remaining planned work:
 
 - Provide a usable browser question/search interface.
-- Include a small evaluation corpus for retrieval relevance and citation
-  correctness.
 
 Exit criteria: a user can index the sample documentation, ask questions, open
 each cited source, and rebuild or remove the index using documented commands.
@@ -63,7 +63,9 @@ finding can be traced to source evidence and a deterministic check.
 
 Planned:
 
-- Publish reproducible retrieval and answer-quality evaluation fixtures.
+- Extend evaluation with reviewed answer-quality examples only when a safe,
+  reproducible scoring method is defined; current retrieval metrics do not
+  assess generated answer truth or completeness.
 - Document self-hosted deployment, database backup/restore, configuration,
   health checks, and troubleshooting.
 - Add optional source connectors only when their access and deletion semantics

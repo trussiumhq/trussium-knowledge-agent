@@ -12,6 +12,7 @@ import psycopg
 from trussium_knowledge_agent.answers import answer_from_passages
 from trussium_knowledge_agent.chat import TrussiumChatClient
 from trussium_knowledge_agent.embeddings import TrussiumEmbeddingsClient
+from trussium_knowledge_agent.evaluation import evaluate_queries, load_dataset
 from trussium_knowledge_agent.indexer import index_source, remove_index
 from trussium_knowledge_agent.retrieval import search_index
 
@@ -33,6 +34,13 @@ def _parser() -> argparse.ArgumentParser:
     ask.add_argument("question", help="question to answer from indexed sources")
     ask.add_argument(
         "--limit", type=_bounded_answer_limit, default=5, help="evidence passages (1-10)"
+    )
+    evaluate = commands.add_parser(
+        "evaluate", help="measure retrieval against expected source citations"
+    )
+    evaluate.add_argument("dataset", help="versioned JSON evaluation dataset")
+    evaluate.add_argument(
+        "--limit", type=_bounded_limit, default=5, help="retrieval results per query (1-20)"
     )
     remove = commands.add_parser("remove", help="remove one previously indexed source")
     remove.add_argument("source_root", help="path originally used to index the source")
@@ -89,6 +97,30 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"Indexed {indexed.file_count} Markdown files into {indexed.chunk_count} "
                     f"chunks (source {indexed.source_id[:12]}, {identity})."
                 )
+                return 0
+
+            if arguments.command == "evaluate":
+                dataset = load_dataset(arguments.dataset)
+                report = evaluate_queries(
+                    dataset,
+                    lambda query, limit: search_index(
+                        query, database_url, embeddings_client, model, top_k=limit
+                    ),
+                    limit=arguments.limit,
+                )
+                print(
+                    f"Queries: {len(report.queries)} | Hit@{report.limit}: {report.hit_rate:.3f} | "
+                    f"Recall@{report.limit}: {report.mean_recall:.3f} | "
+                    f"MRR@{report.limit}: {report.mean_reciprocal_rank:.3f}"
+                )
+                for item in report.queries:
+                    print(f"\n{item.id}: {item.query}")
+                    print(f"  expected: {', '.join(item.expected)}")
+                    print(f"  retrieved: {', '.join(item.retrieved) or '(none)'}")
+                    print(
+                        f"  hit={item.hit:.0f} recall={item.recall:.3f} "
+                        f"reciprocal_rank={item.reciprocal_rank:.3f}"
+                    )
                 return 0
 
             query = arguments.question if arguments.command == "ask" else arguments.query

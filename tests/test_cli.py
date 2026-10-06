@@ -7,6 +7,7 @@ import pytest
 
 from trussium_knowledge_agent import cli
 from trussium_knowledge_agent.answers import AnswerCitation, AnswerResult
+from trussium_knowledge_agent.evaluation import EvaluationQuery, ExpectedPassage
 from trussium_knowledge_agent.indexer import IndexResult
 from trussium_knowledge_agent.store import SearchResult
 
@@ -113,6 +114,35 @@ def test_cli_ask_prints_answer_and_validated_source(
     assert exit_code == 0
     assert "Install the runtime first [C1]." in output
     assert "[C1] manuals/guide.md#setup (Setup)" in output
+
+
+def test_cli_evaluate_prints_aggregate_and_query_metrics(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("DATABASE_URL", "postgresql://example")
+    monkeypatch.setenv("TRUSSIUM_EMBEDDING_MODEL", "test-model")
+    monkeypatch.setattr(cli, "TrussiumEmbeddingsClient", lambda *args, **kwargs: FakeRuntime())
+    monkeypatch.setattr(
+        cli,
+        "load_dataset",
+        lambda _: (EvaluationQuery("one", "question", (ExpectedPassage("setup.md", "database"),)),),
+    )
+    monkeypatch.setattr(
+        cli,
+        "search_index",
+        lambda *args, **kwargs: [
+            SearchResult("fixture", None, "setup.md", (), "database", "hash", "text", 1.0)
+        ],
+    )
+
+    exit_code = cli.main(["evaluate", "fixtures/evaluation-queries.json", "--limit", "1"])
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert "Hit@1: 1.000" in output
+    assert "Recall@1: 1.000" in output
+    assert "MRR@1: 1.000" in output
+    assert "setup.md#database" in output
 
 
 def test_cli_ask_requires_a_chat_model(monkeypatch: pytest.MonkeyPatch) -> None:
