@@ -4,7 +4,8 @@
 
 Trussium Knowledge Agent is a self-hostable reference application for searching
 and maintaining Markdown documentation. The initial product answers questions
-from a user's indexed documents and links each answer to its source. A later
+from a user's indexed documents and identifies each cited source by path and
+heading. A later
 bounded agent workflow audits the same corpus and prepares evidence-backed
 maintenance issues for review.
 
@@ -46,9 +47,11 @@ remain configured on the runtime.
 5. For a query, the application requests one embedding and retrieves up to 20
    nearest passages by exact cosine similarity. Results are filtered to the
    same provider/model/dimension and include source metadata and a score.
-6. A future answer flow will send selected passages and the question to chat.
-   Its response will include links to source files and headings, and state when
-   evidence is insufficient.
+6. The `ask` flow sends the question and at most ten retrieved passages to
+   Trussium chat. The application validates a bounded JSON answer, citation
+   markers, and IDs; it formats source details from database metadata rather
+   than trusting model-generated links. Empty retrieval or invalid output
+   produces a fixed insufficient-evidence message.
 
 Ingestion is repeatable and idempotent for an explicitly selected local source.
 Only Markdown is supported initially. Other formats and external connectors
@@ -75,7 +78,8 @@ The CLI uses Trussium's stable HTTP embeddings contract rather than depending
 on a Git-sourced SDK package. The runtime URL and model are operator
 configuration. Requests use a bounded configurable timeout (30 seconds by
 default, at most 120 seconds); no provider-specific endpoint is called by this
-application.
+application. Chat uses the normalized `POST /v1/chat/completions` contract and
+has a separately configured model from embeddings.
 
 ## Agent workflow
 
@@ -100,6 +104,8 @@ filesystem path, URL, or shell command.
 - File access stays beneath a user-selected source root; symbolic links and
   unsupported file types are handled explicitly.
 - Prompts, retrieved content, credentials, and vectors are excluded from logs.
+- Retrieved passages are untrusted; answers must cite retrieved passage IDs,
+  and model-generated source URLs are never authoritative.
 - Answers expose only citations for indexed source material available to the
   current user.
 - External writes remain disabled until an explicit human approval step.

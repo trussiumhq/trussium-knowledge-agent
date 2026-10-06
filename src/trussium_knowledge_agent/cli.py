@@ -9,6 +9,8 @@ from collections.abc import Sequence
 
 import psycopg
 
+from trussium_knowledge_agent.answers import answer_from_passages
+from trussium_knowledge_agent.chat import TrussiumChatClient
 from trussium_knowledge_agent.embeddings import TrussiumEmbeddingsClient
 from trussium_knowledge_agent.indexer import index_source, remove_index
 from trussium_knowledge_agent.retrieval import search_index
@@ -17,7 +19,7 @@ from trussium_knowledge_agent.retrieval import search_index
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="trussium-knowledge-agent",
-        description="Index explicitly selected local Markdown repositories.",
+        description="Index and search explicitly selected local Markdown repositories.",
     )
     commands = parser.add_subparsers(dest="command", required=True)
     index = commands.add_parser("index", help="replace the index for a Markdown source")
@@ -27,6 +29,11 @@ def _parser() -> argparse.ArgumentParser:
     search = commands.add_parser("search", help="find semantically similar passages")
     search.add_argument("query", help="question or phrase to search for")
     search.add_argument("--limit", type=_bounded_limit, default=5, help="number of results (1-20)")
+    ask = commands.add_parser("ask", help="answer a question using retrieved source evidence")
+    ask.add_argument("question", help="question to answer from indexed sources")
+    ask.add_argument(
+        "--limit", type=_bounded_answer_limit, default=5, help="evidence passages (1-10)"
+    )
     remove = commands.add_parser("remove", help="remove one previously indexed source")
     remove.add_argument("source_root", help="path originally used to index the source")
     return parser
@@ -49,6 +56,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         model = os.environ.get("TRUSSIUM_EMBEDDING_MODEL", "").strip()
         if not model or model == "replace-with-runtime-embedding-model":
             parser.error("TRUSSIUM_EMBEDDING_MODEL must name a model enabled for embeddings")
+        chat_model = os.environ.get("TRUSSIUM_CHAT_MODEL", "").strip()
+        if arguments.command == "ask" and (
+            not chat_model or chat_model == "replace-with-runtime-chat-model"
+        ):
+            parser.error("TRUSSIUM_CHAT_MODEL must name a model enabled for chat")
         base_url = os.environ.get("TRUSSIUM_URL", "http://127.0.0.1:9000")
         api_key = os.environ.get("TRUSSIUM_API_KEY") or None
         try:
@@ -79,13 +91,30 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
                 return 0
 
+            query = arguments.question if arguments.command == "ask" else arguments.query
             results = search_index(
-                arguments.query,
+                query,
                 database_url,
                 embeddings_client,
                 model,
                 top_k=arguments.limit,
             )
+        if arguments.command == "ask":
+            with TrussiumChatClient(
+                base_url, api_key=api_key, timeout_seconds=timeout_seconds
+            ) as chat_client:
+                answer = answer_from_passages(arguments.question, results, chat_client, chat_model)
+            print(answer.answer)
+            for citation in answer.citations:
+                source = citation.source
+                heading = " > ".join(source.heading_path) or "Document"
+                print(
+                    f"[{citation.reference_id}] {source.display_name}/{source.relative_path}"
+                    f"#{source.heading_anchor} ({heading})"
+                )
+                if source.revision:
+                    print(f"    Revision: {source.revision}")
+            return 0
         if not results:
             print("No matching passages found for this embedding model.")
             return 0
@@ -100,9 +129,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"   {result.content}\n")
         return 0
     except psycopg.Error:
-        print("Error: PostgreSQL operation failed; the prior index was preserved.", file=sys.stderr)
+        print("Error: PostgreSQL operation failed.", file=sys.stderr)
         return 1
-    except (RuntimeError, ValueError) as error:
+    except (RuntimeError, TypeError, ValueError) as error:
         print(f"Error: {error}", file=sys.stderr)
         return 1
 
@@ -114,6 +143,16 @@ def _bounded_limit(value: str) -> int:
         raise argparse.ArgumentTypeError("limit must be an integer from 1 to 20") from error
     if not 1 <= limit <= 20:
         raise argparse.ArgumentTypeError("limit must be between 1 and 20")
+    return limit
+
+
+def _bounded_answer_limit(value: str) -> int:
+    try:
+        limit = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("limit must be an integer from 1 to 10") from error
+    if not 1 <= limit <= 10:
+        raise argparse.ArgumentTypeError("limit must be between 1 and 10")
     return limit
 
 
