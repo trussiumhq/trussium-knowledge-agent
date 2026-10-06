@@ -20,9 +20,9 @@ available.
 
 ## Milestone 1 — Markdown RAG
 
-In progress. Safe Markdown indexing, transactional chunk storage, embeddings,
-semantic retrieval, grounded cited answers, and a retrieval evaluation corpus
-are complete. The remaining work is the browser question/search interface.
+Status: complete. Safe Markdown indexing, transactional chunk storage,
+embeddings, semantic retrieval, grounded cited answers, a retrieval evaluation
+corpus, and a minimal browser question interface are complete.
 
 - [x] Safely ingest explicitly selected local Markdown repositories and
   transactionally persist heading-aware chunks and source metadata.
@@ -34,13 +34,13 @@ are complete. The remaining work is the browser question/search interface.
   sources and a clear insufficient-evidence response.
 - [x] Include a bounded evaluation corpus and report retrieval Hit@k, Recall@k,
   MRR@k, and per-query expected/retrieved citations.
+- [x] Provide a browser question interface with bounded requests, safe answer
+  rendering, citation metadata, and insufficient-evidence/error states.
 
-Remaining planned work:
-
-- Provide a usable browser question/search interface.
-
-Exit criteria: a user can index the sample documentation, ask questions, open
-each cited source, and rebuild or remove the index using documented commands.
+Exit criteria: a user can index the sample documentation, ask questions,
+inspect each citation's source path and heading, and rebuild or remove the
+index using documented commands. Browser citations do not serve or link to
+arbitrary local source files.
 
 ## Milestone 2 — Bounded documentation audit agent
 
