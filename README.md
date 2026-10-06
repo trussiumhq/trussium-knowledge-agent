@@ -53,6 +53,30 @@ Trussium runtime. The service also exposes
 Docker volume. The browser and CLI call the separately configured Trussium
 runtime APIs.
 
+### Read-only MCP tool endpoint
+
+The application includes an opt-in authenticated MCP endpoint at
+`POST /v1/mcp`. It is unavailable unless `KNOWLEDGE_AGENT_TOOL_TOKEN` is set.
+Generate a unique high-entropy secret (for example, `openssl rand -hex 32`),
+store it in a secret manager or ignored local `.env`, and configure the same
+value in the trusted Trussium runtime composition. Never commit the secret.
+
+Only the fixed `docs.search` tool is registered. It accepts a query up to 4,000
+characters and a result limit from 1 to 10, and returns retrieved passages with
+source paths, headings, revisions, and scores. Unknown tools and extra
+arguments are rejected. Indexed passages are untrusted evidence; this endpoint
+does not interpret them as instructions or perform writes. It does not expose
+issue creation, filesystem access, shell execution, arbitrary URLs, or dynamic
+tool discovery. Request bodies are capped at 1 MiB, and provider/database
+errors are returned as bounded JSON-RPC failures without logging query or
+passage content.
+
+The endpoint is intended for an explicitly registered fixed remote MCP tool in
+a custom Trussium application. The packaged runtime command remains tool-free
+unless its application composes that adapter. See
+[`docs/adr/0004-cross-process-tool-boundary.md`](docs/adr/0004-cross-process-tool-boundary.md)
+for the trust and deployment boundary.
+
 ### Index and query a Markdown repository
 
 Set `DATABASE_URL` in `.env` to the local database DSN shown in
