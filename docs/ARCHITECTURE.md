@@ -90,8 +90,10 @@ has a separately configured model from embeddings.
 
 ## Agent workflow
 
-The first automation audits documentation and returns a report with source
-evidence. Its operations are explicitly registered, bounded, and audited. The
+The first deterministic audit checks local Markdown link targets and anchors
+under one operator-configured root and returns stable findings with relative
+source paths and line numbers. It is explicitly registered, bounded, and
+read-only; it does not fetch URLs or use a model to make changes. The
 application coordinates retrieval and model calls; Trussium's workflow endpoint
 executes only registered tool invocations and is enabled only when the
 application composes a tool executor. The standard Trussium Python SDK does

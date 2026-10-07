@@ -61,15 +61,23 @@ Generate a unique high-entropy secret (for example, `openssl rand -hex 32`),
 store it in a secret manager or ignored local `.env`, and configure the same
 value in the trusted Trussium runtime composition. Never commit the secret.
 
-Only the fixed `docs.search` tool is registered. It accepts a query up to 4,000
-characters and a result limit from 1 to 10, and returns retrieved passages with
-source paths, headings, revisions, and scores. Unknown tools and extra
-arguments are rejected. Indexed passages are untrusted evidence; this endpoint
-does not interpret them as instructions or perform writes. It does not expose
-issue creation, filesystem access, shell execution, arbitrary URLs, or dynamic
-tool discovery. Request bodies are capped at 1 MiB, and provider/database
-errors are returned as bounded JSON-RPC failures without logging query or
-passage content.
+The fixed `docs.search` tool accepts a query up to 4,000 characters and a result
+limit from 1 to 10, returning retrieved passages with source paths, headings,
+revisions, and scores. The fixed `docs.audit_links` tool performs a deterministic
+read-only link check over the operator-configured `KNOWLEDGE_AGENT_AUDIT_ROOT`;
+its only argument is a bounded `max_findings` value. It does not accept paths or
+URLs from callers, fetch network destinations, follow symlinks, or change files.
+It reports local missing targets, unsafe paths, and missing Markdown anchors.
+External URLs are ignored. Reference-style Markdown links and raw HTML links
+are not currently checked. Scans are bounded by file count, bytes, link count,
+and findings. See
+[`docs/DOCUMENTATION_AUDIT.md`](docs/DOCUMENTATION_AUDIT.md) for limits and
+examples. Unknown tools and extra arguments are rejected. Indexed passages are
+untrusted evidence; this endpoint does not interpret them as instructions or
+perform writes. It does not expose issue creation, shell execution, arbitrary
+URLs, or dynamic tool discovery. Request bodies are capped at 1 MiB, and
+provider/database errors are returned as bounded JSON-RPC failures without
+logging query or passage content.
 
 The endpoint is intended for an explicitly registered fixed remote MCP tool in
 a custom Trussium application. The packaged runtime command remains tool-free
