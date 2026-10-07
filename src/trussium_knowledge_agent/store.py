@@ -99,7 +99,7 @@ def persist_source(
                         chunk.chunk_index,
                         chunk.content_hash,
                         chunk.content,
-                        json.dumps(vector, separators=(",", ":"), allow_nan=False),
+                        json.dumps(chunk.embedding, separators=(",", ":"), allow_nan=False),
                         chunk.embedding_provider,
                         chunk.embedding_model,
                         len(vector),

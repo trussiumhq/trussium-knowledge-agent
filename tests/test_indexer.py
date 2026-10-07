@@ -71,6 +71,22 @@ def test_index_is_idempotent_and_removes_stale_files(tmp_path: Path) -> None:
     assert not remove_index(tmp_path, DATABASE_URL or "")
 
 
+def test_index_persists_each_chunks_own_embedding(tmp_path: Path) -> None:
+    (tmp_path / "a-orchard.md").write_text("# Orchard\n\nGreen apple trees.", encoding="utf-8")
+    (tmp_path / "z-ocean.md").write_text("# Ocean\n\nBlue ocean water.", encoding="utf-8")
+
+    result = index_source(tmp_path, DATABASE_URL or "", _client(), "test-model")
+    rows = fetch_source_chunks(DATABASE_URL or "", result.source_id)
+
+    try:
+        assert {row[1]: row[10] for row in rows} == {
+            "a-orchard.md": "[1,0]",
+            "z-ocean.md": "[0,1]",
+        }
+    finally:
+        remove_index(tmp_path, DATABASE_URL or "")
+
+
 def test_empty_repository_creates_removable_empty_index(tmp_path: Path) -> None:
     result = index_source(tmp_path, DATABASE_URL or "", _client(), "test-model")
 
