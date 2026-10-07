@@ -14,8 +14,9 @@ untrusted data.
 
 ## Decision
 
-- Expose the application-owned `docs.search` tool at the authenticated
-  `POST /v1/mcp` endpoint.
+- Expose application-owned fixed tools at the authenticated `POST /v1/mcp`
+  endpoint: `docs.search` for indexed evidence and `docs.audit_links` for a
+  deterministic local Markdown link check.
 - Keep the name and Pydantic argument schema fixed in application code. Reject
   all unknown tool names, extra arguments, and caller-provided destinations.
 - Require a separately configured bearer token; when the token is absent, the
@@ -24,6 +25,9 @@ untrusted data.
 - Restrict the tool to retrieval from the already indexed corpus, with bounded
   query length, result count, request bytes, and runtime timeout. Return source
   metadata alongside evidence.
+- Configure the audit root only through operator environment configuration.
+  Bound file, link, per-file byte, and finding counts; reject symlink traversal,
+  ignore external URLs, and never write to the source tree.
 - Treat all queries and retrieved passage text as data, never authorization or
   instructions. Keep this endpoint read-only; repository writes require a
   separate human-approval design.

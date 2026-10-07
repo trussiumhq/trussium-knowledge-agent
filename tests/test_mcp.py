@@ -1,5 +1,6 @@
 """Tests for authenticated, fixed, read-only MCP tools."""
 
+from pathlib import Path
 from typing import Self
 
 import pytest
@@ -7,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from trussium_knowledge_agent import mcp
 from trussium_knowledge_agent.app import app
+from trussium_knowledge_agent.auditing import LinkAuditReport, LinkFinding
 from trussium_knowledge_agent.store import SearchResult
 
 _TOKEN = "test-tool-token"
@@ -110,6 +112,110 @@ def test_docs_search_returns_only_bounded_source_evidence(
         "score": 0.91,
     }
     assert observed == {"query": prompt_injection, "top_k": 2}
+
+
+def test_docs_audit_links_uses_only_configured_root_and_bounds_findings(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("KNOWLEDGE_AGENT_TOOL_TOKEN", _TOKEN)
+    monkeypatch.setenv("KNOWLEDGE_AGENT_AUDIT_ROOT", str(tmp_path))
+    observed: list[str] = []
+
+    def audit(source_root: str) -> LinkAuditReport:
+        observed.append(source_root)
+        return LinkAuditReport(
+            files_checked=3,
+            links_checked=4,
+            findings=(
+                LinkFinding("link-target-missing", "a.md", 2, "one.md", "Missing."),
+                LinkFinding("link-target-missing", "a.md", 3, "two.md", "Missing."),
+                LinkFinding("link-target-missing", "b.md", 4, "three.md", "Missing."),
+            ),
+            truncated=False,
+        )
+
+    monkeypatch.setattr(mcp, "audit_markdown_links", audit)
+    response = TestClient(app).post(
+        "/v1/mcp",
+        json=_request(name="docs.audit_links", arguments={"max_findings": 2}),
+        headers=_headers(),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()["result"]["content"][0]["json"]
+    assert payload["files_checked"] == 3
+    assert payload["links_checked"] == 4
+    assert [finding["target"] for finding in payload["findings"]] == ["one.md", "two.md"]
+    assert payload["truncated"] is True
+    assert observed == [str(tmp_path)]
+
+
+def test_docs_audit_links_requires_configured_root(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("KNOWLEDGE_AGENT_TOOL_TOKEN", _TOKEN)
+    monkeypatch.delenv("KNOWLEDGE_AGENT_AUDIT_ROOT", raising=False)
+    monkeypatch.setattr(
+        mcp, "audit_markdown_links", lambda *_: pytest.fail("audit root is not configured")
+    )
+
+    response = TestClient(app).post(
+        "/v1/mcp",
+        json=_request(name="docs.audit_links", arguments={"max_findings": 3}),
+        headers=_headers(),
+    )
+
+    assert response.json()["error"]["message"] == "The documentation audit service is unavailable."
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {"max_findings": 1, "source_root": "/tmp/attacker"},
+        {"max_findings": 1, "url": "https://example.test"},
+        {"max_findings": 501},
+    ],
+)
+def test_docs_audit_links_rejects_caller_destinations_and_unbounded_limits(
+    monkeypatch: pytest.MonkeyPatch,
+    arguments: dict[str, object],
+) -> None:
+    monkeypatch.setenv("KNOWLEDGE_AGENT_TOOL_TOKEN", _TOKEN)
+    monkeypatch.setenv("KNOWLEDGE_AGENT_AUDIT_ROOT", "/operator/configured/root")
+    monkeypatch.setattr(
+        mcp, "audit_markdown_links", lambda *_: pytest.fail("invalid arguments must be rejected")
+    )
+
+    response = TestClient(app).post(
+        "/v1/mcp", json=_request(name="docs.audit_links", arguments=arguments), headers=_headers()
+    )
+
+    assert response.json()["error"]["code"] == -32602
+
+
+def test_docs_audit_links_does_not_disclose_local_root_on_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    secret_root = "/private/customer/manuals"
+    monkeypatch.setenv("KNOWLEDGE_AGENT_TOOL_TOKEN", _TOKEN)
+    monkeypatch.setenv("KNOWLEDGE_AGENT_AUDIT_ROOT", secret_root)
+    monkeypatch.setattr(
+        mcp,
+        "audit_markdown_links",
+        lambda *_: (_ for _ in ()).throw(ValueError(f"cannot read {secret_root}")),
+    )
+
+    response = TestClient(app).post(
+        "/v1/mcp",
+        json=_request(name="docs.audit_links", arguments={"max_findings": 10}),
+        headers=_headers(),
+    )
+
+    assert response.json()["error"]["message"] == "The documentation link audit failed."
+    assert secret_root not in response.text
+    assert secret_root not in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(

@@ -12,6 +12,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from trussium_knowledge_agent.auditing import MAX_AUDIT_FINDINGS, audit_markdown_links
 from trussium_knowledge_agent.embeddings import TrussiumEmbeddingsClient
 from trussium_knowledge_agent.retrieval import search_index
 
@@ -37,6 +38,14 @@ class SearchArguments(BaseModel):
 
     query: str = Field(min_length=1, max_length=4000)
     limit: int = Field(default=5, ge=1, le=10)
+
+
+class AuditLinksArguments(BaseModel):
+    """Bounded read-only local Markdown audit arguments."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    max_findings: int = Field(default=100, ge=1, le=MAX_AUDIT_FINDINGS)
 
 
 def _response(request_id: int | str | None, *, result: dict[str, Any]) -> dict[str, Any]:
@@ -85,7 +94,7 @@ async def _read_bounded_body(request: Request) -> bytes | None:
 
 @router.post("/v1/mcp", tags=["tools"])
 async def mcp_tools(request: Request) -> JSONResponse:
-    """Execute only the fixed docs.search operation after bearer authentication."""
+    """Execute fixed read-only documentation tools after bearer authentication."""
     if not _authorized(request):
         return JSONResponse(
             status_code=503 if not os.environ.get("KNOWLEDGE_AGENT_TOOL_TOKEN") else 401,
@@ -105,12 +114,38 @@ async def mcp_tools(request: Request) -> JSONResponse:
         return _error(message.id, -32601, "Method not supported.")
     name = message.params.get("name")
     raw_arguments = message.params.get("arguments", {})
-    if name != "docs.search":
-        return _error(message.id, -32004, "Tool not found.")
     if not isinstance(raw_arguments, dict) or set(message.params) != {"name", "arguments"}:
         return _error(message.id, -32602, "Tool parameters are invalid.")
+
+    if name == "docs.audit_links":
+        try:
+            audit_arguments = AuditLinksArguments.model_validate(raw_arguments)
+        except ValidationError:
+            return _error(message.id, -32602, "Tool arguments are invalid.")
+        source_root = os.environ.get("KNOWLEDGE_AGENT_AUDIT_ROOT", "").strip()
+        if not source_root:
+            return _error(message.id, -32000, "The documentation audit service is unavailable.")
+        try:
+            report = audit_markdown_links(source_root)
+            output = report.as_dict()
+            findings = output["findings"]
+            assert isinstance(findings, list)
+            output["findings"] = findings[: audit_arguments.max_findings]
+            output["truncated"] = report.truncated or len(findings) > audit_arguments.max_findings
+        except (OSError, RuntimeError, TypeError, ValueError):
+            print("MCP documentation link audit failed.", file=sys.stderr)
+            return _error(message.id, -32000, "The documentation link audit failed.")
+        return JSONResponse(
+            content=_response(
+                message.id,
+                result={"isError": False, "content": [{"type": "json", "json": output}]},
+            )
+        )
+
+    if name != "docs.search":
+        return _error(message.id, -32004, "Tool not found.")
     try:
-        arguments = SearchArguments.model_validate(raw_arguments)
+        search_arguments = SearchArguments.model_validate(raw_arguments)
     except ValidationError:
         return _error(message.id, -32602, "Tool arguments are invalid.")
 
@@ -128,14 +163,14 @@ async def mcp_tools(request: Request) -> JSONResponse:
             base_url, api_key=api_key, timeout_seconds=timeout_seconds
         ) as embeddings_client:
             passages = search_index(
-                arguments.query,
+                search_arguments.query,
                 database_url,
                 embeddings_client,
                 embedding_model,
-                top_k=arguments.limit,
+                top_k=search_arguments.limit,
             )
         output = {
-            "query": arguments.query,
+            "query": search_arguments.query,
             "matches": [
                 {
                     "display_name": passage.display_name,

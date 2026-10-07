@@ -44,12 +44,16 @@ inspect each citation's source path and heading, and rebuild or remove the
 index using documented commands. Browser citations do not serve or link to
 arbitrary local source files.
 
-## Milestone 2 — Bounded documentation audit agent
+## Milestone 2 — Bounded documentation audit agent (in progress)
 
 Planned:
 
 - Define a deterministic documentation audit that uses retrieved evidence and
   registered read-only tools.
+- [x] Add a bounded local Markdown link audit with stable findings, source
+  locations, no caller-controlled path, and no automatic source changes.
+- [x] Compose the audit tool in an explicitly registered Trussium workflow and
+  validate the full request/report path end to end.
 - Run the bounded workflow through an opt-in Trussium runtime composition.
 - Report suspected stale or missing guidance with citations and confidence;
   never modify a repository automatically.
