@@ -66,3 +66,12 @@ configured embedding model, corpus edits, and stored index. Keep fixture content
 small and deterministic, and review metric changes rather than treating one
 score as a universal quality threshold. These metrics assess retrieval and
 citation coverage only—not answer faithfulness, completeness, or usefulness.
+
+## Recorded local reference run
+
+On 2026-10-07, the six-query fixture was indexed as 3 Markdown files and 6
+chunks using PostgreSQL 16.15 with pgvector 0.8.7 and the local
+OpenAI-compatible Ollama model `nomic-embed-text:latest` (768 dimensions).
+The run returned Hit@5 1.000, Recall@5 1.000, and MRR@5 1.000. This is one
+environment-specific reference result, not a guaranteed threshold for other
+models or corpus versions.

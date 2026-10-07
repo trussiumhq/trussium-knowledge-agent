@@ -30,6 +30,8 @@ corpus, and a minimal browser question interface are complete.
   commands.
 - [x] Call Trussium embeddings and store vectors with provider/model/dimension
   identity; add bounded exact-cosine retrieval with source citations.
+- [x] Preserve each chunk's own vector during bulk persistence and guard the
+  mapping with a database-backed regression test.
 - [x] Generate grounded answers with citations validated against retrieved
   sources and a clear insufficient-evidence response.
 - [x] Include a bounded evaluation corpus and report retrieval Hit@k, Recall@k,
