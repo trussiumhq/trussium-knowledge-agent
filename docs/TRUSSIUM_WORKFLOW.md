@@ -115,9 +115,7 @@ review_guidance_tool = RemoteMCPTool(
 ).registered_tool()
 
 app = create_application(
-    tool_executor=ToolExecutor(
-        ToolRegistry((search_tool, audit_tool, review_guidance_tool))
-    ),
+    tool_executor=ToolExecutor(ToolRegistry((search_tool, audit_tool, review_guidance_tool))),
 )
 ```
 
