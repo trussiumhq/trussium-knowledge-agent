@@ -35,12 +35,13 @@ truncated, or uncited output.
 
 ## Consequences
 
-The CLI can produce short evidence-backed answers with citations mapped to
-stored repository/path/heading/revision metadata. The strict output contract
-may reject valid but nonconforming model responses; this is preferable to
-presenting unverifiable claims as supported. Generated citations are not
+The CLI and browser can produce short evidence-backed answers with citations
+mapped to stored repository/path/heading/revision metadata. The strict output
+contract may reject valid but nonconforming model responses; this is preferable
+to presenting unverifiable claims as supported. Generated citations are not
 clickable remote links because the index does not store an authoritative source
-URL. Evaluation and a browser UI remain later work.
+URL. Retrieval evaluation is included, but it does not score answer truth or
+completeness.
 
 ## Alternatives considered
 

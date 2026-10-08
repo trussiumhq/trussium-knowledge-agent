@@ -5,9 +5,9 @@
 Trussium Knowledge Agent is a self-hostable reference application for searching
 and maintaining Markdown documentation. The initial product answers questions
 from a user's indexed documents and identifies each cited source by path and
-heading. A later
-bounded agent workflow audits the same corpus and prepares evidence-backed
-maintenance issues for review.
+heading. Its first bounded workflow slice can run explicitly registered,
+read-only search and documentation-audit tools; it does not automatically
+propose or apply maintenance changes.
 
 ## System boundaries
 
@@ -17,7 +17,7 @@ Markdown source
     ▼
 extract → chunk with heading/path metadata → Trussium embeddings → PostgreSQL/pgvector
                                                                │
-Question → Trussium embeddings → similarity search → optional Trussium reranking
+Question → Trussium embeddings → exact cosine similarity search
                                                                │
                                                                ▼
                                              Trussium chat with cited passages
@@ -29,10 +29,11 @@ Documentation audit → registered, bounded tools → report → human review
 ```
 
 The application owns source access, parsing, chunking, storage, retrieval,
-citation formatting, and the user interface. The Trussium runtime supplies
-provider-neutral chat, embedding, and reranking APIs. PostgreSQL with pgvector
-stores vectors alongside source identity and metadata. Provider credentials
-remain configured on the runtime.
+citation formatting, and the user interface. It uses Trussium's
+provider-neutral chat and embedding APIs; integrating the runtime's reranking
+API remains future work. PostgreSQL with pgvector stores vectors alongside
+source identity and metadata. Provider credentials remain configured on the
+runtime.
 
 ## Retrieval flow
 
@@ -88,23 +89,26 @@ default, at most 120 seconds); no provider-specific endpoint is called by this
 application. Chat uses the normalized `POST /v1/chat/completions` contract and
 has a separately configured model from embeddings.
 
-## Agent workflow
+## Bounded Trussium workflow integration
 
-The first deterministic audit checks local Markdown link targets and anchors
-under one operator-configured root and returns stable findings with relative
-source paths and line numbers. It is explicitly registered, bounded, and
-read-only; it does not fetch URLs or use a model to make changes. The
-application coordinates retrieval and model calls; Trussium's workflow endpoint
-executes only registered tool invocations and is enabled only when the
-application composes a tool executor. The standard Trussium Python SDK does
-not currently expose the workflow endpoint, so the implementation milestone
-must decide whether to add that SDK method or use a narrowly scoped typed HTTP
-client.
+The application exposes authenticated, fixed MCP tools for indexed-document
+search and a deterministic Markdown link audit. The audit checks links and
+anchors beneath one operator-configured root and returns stable findings with
+relative paths and line numbers. It does not fetch URLs or modify files.
 
-Tools begin read-only. Creating an issue or pull request is a later opt-in
-operation that requires a human approval decision and a narrowly scoped GitHub
-credential. No agent tool may execute arbitrary code or choose an unrestricted
-filesystem path, URL, or shell command.
+A custom Trussium runtime application registers these remote tools explicitly
+with `RemoteMCPTool` and the runtime's `ToolRegistry`. A caller then submits a
+bounded, declared workflow through the Python SDK's `execute_workflow` method.
+The runtime executes only registered tool names; it does not discover tools at
+request time. See [`TRUSSIUM_WORKFLOW.md`](TRUSSIUM_WORKFLOW.md) for setup and
+examples. This is deterministic orchestration, not an autonomous planner: it
+does not infer new steps, make repository changes, or create GitHub issues or
+pull requests.
+
+Tools remain read-only. Creating an issue or pull request is not implemented;
+it would require a separately designed human approval interaction and a
+narrowly scoped GitHub credential. No tool may execute arbitrary code or
+choose an unrestricted filesystem path, URL, or shell command.
 
 ## Trust and privacy
 

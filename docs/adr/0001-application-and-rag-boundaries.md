@@ -36,8 +36,12 @@ data and user experience into the runtime.
 PostgreSQL stores relational source metadata together with vectors and can
 support ordinary text search alongside vector search. Operators run a database
 in addition to the Trussium runtime. The first release supports Markdown only.
-The standard Trussium Python SDK does not yet expose workflow execution, so the
-agent milestone must resolve its client integration before implementation.
+The first cross-process workflow slice is implemented: a custom runtime
+application registers the Knowledge Agent's fixed read-only MCP tools, and the
+Python SDK submits declared workflows to that configured runtime. The runtime
+and SDK remain separate services/packages; the Knowledge Agent does not depend
+on runtime internals. See
+[`TRUSSIUM_WORKFLOW.md`](../TRUSSIUM_WORKFLOW.md).
 
 ## Alternatives considered
 

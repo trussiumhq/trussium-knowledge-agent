@@ -5,21 +5,26 @@ Markdown repository and reviewing documentation maintenance findings. It
 demonstrates retrieval augmented generation (RAG) and bounded, explicitly
 registered agent tools using Trussium.
 
-The first milestone currently supports safe Markdown indexing, semantic
-retrieval, grounded answers with validated source citations, and a repeatable
-retrieval evaluation fixture, and a minimal browser question interface.
-Bounded agent tools are planned follow-on work. See the
-[roadmap](docs/ROADMAP.md) for current status.
+The reference app supports safe Markdown indexing, semantic retrieval,
+grounded answers with validated source citations, retrieval evaluation, and a
+minimal browser question interface. It also exposes authenticated, fixed
+read-only tools that a custom Trussium runtime can register in a bounded
+workflow. The first workflow slice supports document search and a deterministic
+Markdown link audit; it does not autonomously edit repositories. See the
+[workflow guide](docs/TRUSSIUM_WORKFLOW.md) and
+[roadmap](docs/ROADMAP.md) for scope and remaining work.
 
 ## Architecture
 
 - FastAPI browser interface for grounded questions, with a CLI for indexing,
   searching, asking questions, and evaluating retrieval.
-- An existing Trussium runtime for chat, embeddings, and optional reranking.
+- An existing Trussium runtime for chat and embeddings; reranking integration
+  remains future work.
 - PostgreSQL with pgvector for document chunks, source metadata, and vectors.
 - Local Markdown repositories as the first ingestion source.
-- An opt-in Trussium runtime with registered tools for bounded documentation
-  audits. External issue or pull request creation requires human approval.
+- An opt-in Trussium runtime with explicitly registered tools for bounded
+  documentation search and deterministic audits. External issue or pull
+  request creation is not implemented.
 
 The app owns ingestion, retrieval, citations, and user experience. Trussium
 provides model capabilities and controlled execution. See
