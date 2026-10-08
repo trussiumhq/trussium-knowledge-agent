@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted for the first read-only tool integration.
+Implemented and validated for the first read-only workflow integration.
 
 ## Context
 
@@ -36,14 +36,17 @@ untrusted data.
 
 ## Consequences
 
-- A custom Trussium application can register a fixed remote MCP adapter for the
+- A custom Trussium application registers fixed remote MCP adapters for the
   Knowledge Agent without enabling arbitrary tools in the packaged runtime.
 - The endpoint is disabled by default and must not be exposed without HTTPS and
   a secret manager in deployed environments.
-- The standard Python SDK workflow method and end-to-end integration remain
-  tracked by [runtime issue #466](https://github.com/trussiumhq/trussium/issues/466),
-  [SDK issue #14](https://github.com/trussiumhq/trussium-python/issues/14), and
-  [Knowledge Agent issue #15](https://github.com/trussiumhq/trussium-knowledge-agent/issues/15).
+- The runtime adapter, typed Python SDK workflow method, authenticated
+  Knowledge Agent tools, and first end-to-end audit workflow are implemented
+  and validated. The integration does not add automatic source edits, issue
+  creation, or general-purpose agent execution. See the
+  [`Trussium workflow guide`](../TRUSSIUM_WORKFLOW.md), runtime
+  [ADR 0045](https://github.com/trussiumhq/trussium/blob/main/docs/adr/0045-cross-process-agent-tool-boundary.md),
+  and the published [Agent Workflows guide](https://trussiumhq.github.io/agent-workflows/).
 
 ## Alternatives considered
 

@@ -44,26 +44,31 @@ inspect each citation's source path and heading, and rebuild or remove the
 index using documented commands. Browser citations do not serve or link to
 arbitrary local source files.
 
-## Milestone 2 — Bounded documentation audit agent (in progress)
+## Milestone 2 — Bounded documentation audit workflow
 
-Planned:
+Status: first read-only workflow slice complete; semantic audit and approved
+write capabilities remain future work.
 
-- Define a deterministic documentation audit that uses retrieved evidence and
-  registered read-only tools.
 - [x] Add a bounded local Markdown link audit with stable findings, source
   locations, no caller-controlled path, and no automatic source changes.
-- [x] Compose the audit tool in an explicitly registered Trussium workflow and
-  validate the full request/report path end to end.
-- Run the bounded workflow through an opt-in Trussium runtime composition.
-- Report suspected stale or missing guidance with citations and confidence;
-  never modify a repository automatically.
-- Add human-reviewed issue creation only after a clear approval interaction,
-  scoped credential setup, audit events, and failure recovery are documented.
-- Test prompt injection, denied tools, approval timeout, cancellation, and
-  source access boundaries.
+- [x] Expose fixed, authenticated MCP tools for indexed document search and
+  deterministic link auditing.
+- [x] Register the remote tools explicitly in a custom Trussium runtime
+  application and call them through the typed Python SDK workflow API.
+- [x] Validate the local SDK-to-runtime-to-Knowledge-Agent audit workflow.
+- [ ] Add evidence-backed detection of stale guidance with citations and
+  confidence; preserve the read-only default and review boundary.
+- [ ] Consider human-approved issue creation only after approval UX, narrowly
+  scoped credentials, audit events, and recovery behavior are designed.
+- [ ] Expand end-to-end checks for denied tools, cancellation, timeout, and
+  source-access boundaries as workflow behavior grows.
 
-Exit criteria: no external write occurs without a recorded approval, and each
-finding can be traced to source evidence and a deterministic check.
+Exit criteria for the completed slice: the runtime invokes only explicitly
+registered tools; the audit is bounded and read-only; findings use
+root-relative source locations; and the workflow can be traced through runtime
+execution results. Semantic stale-content analysis and external writes are not
+part of this completed slice. See
+[`TRUSSIUM_WORKFLOW.md`](TRUSSIUM_WORKFLOW.md) for setup and limits.
 
 ## Milestone 3 — Evaluation and deployment guidance
 
