@@ -155,6 +155,7 @@ def search_chunks(
     provider: str,
     model: str,
     top_k: int = 5,
+    exclude_source: tuple[str, str] | None = None,
 ) -> list[SearchResult]:
     """Return bounded exact cosine matches for one embedding identity."""
     if not 1 <= top_k <= 20:
@@ -167,11 +168,27 @@ def search_chunks(
         raise ValueError("query vector values must be finite")
     if not any(value != 0.0 for value in query_vector):
         raise ValueError("zero vectors cannot be used for cosine search")
+    if exclude_source is not None and (
+        not exclude_source[0].strip() or not exclude_source[1].strip()
+    ):
+        raise ValueError("excluded source name and path must be non-empty")
     vector_literal = json.dumps(query_vector, separators=(",", ":"), allow_nan=False)
+    exclusion = ""
+    parameters: list[Any] = [
+        vector_literal,
+        provider,
+        model,
+        len(query_vector),
+    ]
+    if exclude_source is not None:
+        exclusion = "AND NOT (s.display_name = %s AND c.relative_path = %s)"
+        parameters.extend(exclude_source)
+    parameters.append(vector_literal)
+    parameters.append(top_k)
     with psycopg.connect(database_url) as connection:
         _apply_migrations(connection)
         rows = connection.execute(
-            """SELECT s.display_name, s.revision, c.relative_path, c.heading_path,
+            f"""SELECT s.display_name, s.revision, c.relative_path, c.heading_path,
                       c.heading_anchor, c.content_hash, c.content,
                       1 - (c.embedding <=> %s::vector) AS score
                FROM document_chunks AS c
@@ -180,16 +197,10 @@ def search_chunks(
                  AND c.embedding_provider = %s
                  AND c.embedding_model = %s
                  AND c.embedding_dimension = %s
+                 {exclusion}
                ORDER BY c.embedding <=> %s::vector ASC, c.chunk_id ASC
                LIMIT %s""",
-            (
-                vector_literal,
-                provider,
-                model,
-                len(query_vector),
-                vector_literal,
-                top_k,
-            ),
+            tuple(parameters),
         ).fetchall()
         return [
             SearchResult(

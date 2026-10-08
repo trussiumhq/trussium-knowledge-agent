@@ -1,5 +1,6 @@
 """Tests for authenticated, fixed, read-only MCP tools."""
 
+import json
 from pathlib import Path
 from typing import Self
 
@@ -9,6 +10,7 @@ from fastapi.testclient import TestClient
 from trussium_knowledge_agent import mcp
 from trussium_knowledge_agent.app import app
 from trussium_knowledge_agent.auditing import LinkAuditReport, LinkFinding
+from trussium_knowledge_agent.chat import ChatCompletion
 from trussium_knowledge_agent.store import SearchResult
 
 _TOKEN = "test-tool-token"
@@ -20,6 +22,31 @@ class FakeRuntime:
 
     def __exit__(self, *_: object) -> None:
         return None
+
+
+class FakeChat:
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        return None
+
+    def complete(self, *, model: str, messages: list[dict[str, str]]) -> ChatCompletion:
+        assert model == "chat-model"
+        assert "untrusted data" in messages[0]["content"]
+        return ChatCompletion(
+            "test-provider",
+            "resolved-model",
+            json.dumps(
+                {
+                    "status": "potential_conflict",
+                    "assessment": "The independent runbook recommends rolling updates [C1].",
+                    "citations": ["C1"],
+                    "confidence": "medium",
+                }
+            ),
+            "stop",
+        )
 
 
 def _passage() -> SearchResult:
@@ -216,6 +243,102 @@ def test_docs_audit_links_does_not_disclose_local_root_on_failure(
     assert response.json()["error"]["message"] == "The documentation link audit failed."
     assert secret_root not in response.text
     assert secret_root not in capsys.readouterr().err
+
+
+def test_docs_review_guidance_returns_grounded_candidate_conflict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("KNOWLEDGE_AGENT_TOOL_TOKEN", _TOKEN)
+    monkeypatch.setenv("DATABASE_URL", "postgresql://example")
+    monkeypatch.setenv("TRUSSIUM_EMBEDDING_MODEL", "embed-model")
+    monkeypatch.setenv("TRUSSIUM_CHAT_MODEL", "chat-model")
+    monkeypatch.setattr(mcp, "TrussiumEmbeddingsClient", lambda *args, **kwargs: FakeRuntime())
+    monkeypatch.setattr(mcp, "TrussiumChatClient", lambda *args, **kwargs: FakeChat())
+    observed: dict[str, object] = {}
+
+    def search_index(*args: object, **kwargs: object) -> list[SearchResult]:
+        observed["query"] = args[0]
+        observed["exclude_source"] = kwargs["exclude_source"]
+        observed["top_k"] = kwargs["top_k"]
+        return [_passage()]
+
+    monkeypatch.setattr(mcp, "search_index", search_index)
+    response = TestClient(app).post(
+        "/v1/mcp",
+        json=_request(
+            name="docs.review_guidance",
+            arguments={
+                "source_name": "operator-manuals",
+                "source_relative_path": "deploy.md",
+                "guidance": "Use blue-green deployment.",
+                "limit": 3,
+            },
+        ),
+        headers=_headers(),
+    )
+
+    output = response.json()["result"]["content"][0]["json"]
+    assert response.status_code == 200
+    assert output["status"] == "potential_conflict"
+    assert output["confidence"] == "medium"
+    assert output["confidence_note"] == "Qualitative model estimate; not calibrated."
+    assert output["citations"] == [
+        {
+            "reference_id": "C1",
+            "display_name": "manuals",
+            "revision": "rev-123",
+            "relative_path": "setup.md",
+            "heading_path": ["Runtime", "Setup"],
+            "heading_anchor": "runtime-setup",
+        }
+    ]
+    assert observed == {
+        "query": "Use blue-green deployment.",
+        "exclude_source": ("operator-manuals", "deploy.md"),
+        "top_k": 3,
+    }
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {
+            "source_name": "manuals",
+            "source_relative_path": "../private.md",
+            "guidance": "Use blue-green deployment.",
+            "limit": 3,
+        },
+        {
+            "source_name": "manuals",
+            "source_relative_path": "deploy.md",
+            "guidance": "x" * 4001,
+            "limit": 3,
+        },
+        {
+            "source_name": "manuals",
+            "source_relative_path": "deploy.md",
+            "guidance": "Review",
+            "limit": 3,
+            "endpoint_url": "https://attacker.example",
+        },
+    ],
+)
+def test_docs_review_guidance_rejects_invalid_or_destination_arguments(
+    monkeypatch: pytest.MonkeyPatch,
+    arguments: dict[str, object],
+) -> None:
+    monkeypatch.setenv("KNOWLEDGE_AGENT_TOOL_TOKEN", _TOKEN)
+    monkeypatch.setattr(
+        mcp, "search_index", lambda *_args, **_kwargs: pytest.fail("must not search")
+    )
+
+    response = TestClient(app).post(
+        "/v1/mcp",
+        json=_request(name="docs.review_guidance", arguments=arguments),
+        headers=_headers(),
+    )
+
+    assert response.json()["error"]["code"] == -32602
 
 
 @pytest.mark.parametrize(

@@ -92,9 +92,14 @@ has a separately configured model from embeddings.
 ## Bounded Trussium workflow integration
 
 The application exposes authenticated, fixed MCP tools for indexed-document
-search and a deterministic Markdown link audit. The audit checks links and
-anchors beneath one operator-configured root and returns stable findings with
-relative paths and line numbers. It does not fetch URLs or modify files.
+search, deterministic Markdown link auditing, and evidence-bounded review of a
+supplied guidance excerpt. The audit checks links and anchors beneath one
+operator-configured root and returns stable findings with relative paths and
+line numbers. Guidance review compares the supplied excerpt with independent
+indexed passages and validates every returned citation. It is advisory: opaque
+revision identifiers do not establish freshness or authority, confidence is
+qualitative and uncalibrated, and the supplied path is metadata only. Neither
+tool fetches caller-provided URLs or modifies files.
 
 A custom Trussium runtime application registers these remote tools explicitly
 with `RemoteMCPTool` and the runtime's `ToolRegistry`. A caller then submits a
