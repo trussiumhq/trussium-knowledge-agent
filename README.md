@@ -117,6 +117,7 @@ uv run --env-file .env trussium-knowledge-agent search "how do I configure retri
 uv run --env-file .env trussium-knowledge-agent ask "How do I configure retries?" --limit 5
 uv run --env-file .env trussium-knowledge-agent index fixtures/evaluation-corpus
 uv run --env-file .env trussium-knowledge-agent evaluate fixtures/evaluation-queries.json --limit 5
+uv run --env-file .env trussium-knowledge-agent evaluate-guidance fixtures/guidance-review-cases.json
 uv run --env-file .env trussium-knowledge-agent remove /path/to/markdown-repo
 ```
 
@@ -147,7 +148,10 @@ The included retrieval evaluation fixture compares ranked source locations
 against expected `path#heading-anchor` citations. It reports Hit@k, Recall@k,
 and MRR@k; it does not judge generated answer quality. See
 [`docs/EVALUATION.md`](docs/EVALUATION.md) for setup, dataset limits, and
-interpretation guidance.
+interpretation guidance. The separate guidance-review fixture sends synthetic
+cases to the configured chat model and displays expected versus observed results
+for manual inspection; it does not require PostgreSQL or embeddings and does
+not calculate calibrated accuracy.
 
 ### Development checks
 

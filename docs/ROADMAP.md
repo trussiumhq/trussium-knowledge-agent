@@ -76,9 +76,12 @@ freshness. External writes are not part of this completed slice. See
 
 Planned:
 
-- Extend evaluation with reviewed answer-quality examples only when a safe,
-  reproducible scoring method is defined; current retrieval metrics do not
-  assess generated answer truth or completeness.
+- [x] Add a small synthetic, human-reviewable guidance-review case set and a
+  case-by-case inspection command; do not treat agreement as calibrated
+  accuracy or a release threshold.
+- [ ] Expand reviewed answer-quality examples only when a safe, reproducible
+  scoring method is defined; current retrieval metrics do not assess generated
+  answer truth or completeness.
 - Document self-hosted deployment, database backup/restore, configuration,
   health checks, and troubleshooting.
 - Add optional source connectors only when their access and deletion semantics

@@ -1,0 +1,119 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "rollout-strategy-conflict",
+      "source_name": "platform-handbook",
+      "source_relative_path": "deploy/releases.md",
+      "guidance": "Production releases must use blue-green deployments.",
+      "expected_status": "potential_conflict",
+      "expected_citations": ["release-runbook.md#deployment-strategy"],
+      "rationale": "The independent runbook explicitly says blue-green deployments are unsupported and mandates rolling updates.",
+      "evidence": [
+        {
+          "source_name": "operations-runbook",
+          "revision": "fixture-v1",
+          "path": "release-runbook.md",
+          "heading_path": ["Production releases", "Deployment strategy"],
+          "anchor": "deployment-strategy",
+          "content": "Production releases must use rolling updates. Blue-green deployments are not supported by this service."
+        }
+      ]
+    },
+    {
+      "id": "audit-retention-conflict",
+      "source_name": "security-policy",
+      "source_relative_path": "audit/log-retention.md",
+      "guidance": "Audit events must be retained for at least 90 days.",
+      "expected_status": "potential_conflict",
+      "expected_citations": ["logging-operations.md#audit-retention"],
+      "rationale": "The independent operations procedure explicitly deletes audit events after 30 days.",
+      "evidence": [
+        {
+          "source_name": "logging-operations",
+          "revision": "fixture-v1",
+          "path": "logging-operations.md",
+          "heading_path": ["Data lifecycle", "Audit retention"],
+          "anchor": "audit-retention",
+          "content": "Audit events are retained for 30 days. The scheduled retention job permanently removes older events."
+        }
+      ]
+    },
+    {
+      "id": "https-compatible-tls-detail",
+      "source_name": "service-security-guide",
+      "source_relative_path": "network/https.md",
+      "guidance": "Public service endpoints must use HTTPS.",
+      "expected_status": "no_conflict_found",
+      "expected_citations": ["tls-baseline.md#transport-security"],
+      "rationale": "The evidence specifies a TLS baseline for HTTPS and does not contradict the requirement.",
+      "evidence": [
+        {
+          "source_name": "tls-baseline",
+          "revision": "fixture-v1",
+          "path": "tls-baseline.md",
+          "heading_path": ["Network security", "Transport security"],
+          "anchor": "transport-security",
+          "content": "All externally reachable HTTP services must redirect to HTTPS. TLS 1.2 or newer is required."
+        }
+      ]
+    },
+    {
+      "id": "shutdown-grace-compatible-detail",
+      "source_name": "runtime-operations-guide",
+      "source_relative_path": "operations/shutdown.md",
+      "guidance": "Allow the process up to 30 seconds to shut down gracefully.",
+      "expected_status": "no_conflict_found",
+      "expected_citations": ["orchestrator-settings.md#termination-grace"],
+      "rationale": "A 45-second orchestrator grace period is compatible with a process that can finish within 30 seconds.",
+      "evidence": [
+        {
+          "source_name": "orchestrator-settings",
+          "revision": "fixture-v1",
+          "path": "orchestrator-settings.md",
+          "heading_path": ["Pod lifecycle", "Termination grace"],
+          "anchor": "termination-grace",
+          "content": "Set terminationGracePeriodSeconds to 45 so the process can complete its graceful shutdown before forced termination."
+        }
+      ]
+    },
+    {
+      "id": "unrelated-evidence-insufficient",
+      "source_name": "deployment-guide",
+      "source_relative_path": "deploy/health-checks.md",
+      "guidance": "Wait 15 seconds between production rollout batches.",
+      "expected_status": "insufficient_evidence",
+      "expected_citations": [],
+      "rationale": "The only supplied evidence describes request-ID fields in logs and cannot assess rollout timing.",
+      "evidence": [
+        {
+          "source_name": "logging-guide",
+          "revision": "fixture-v1",
+          "path": "logging.md",
+          "heading_path": ["Structured logging", "Request context"],
+          "anchor": "request-context",
+          "content": "Structured application logs include the request identifier when it is available."
+        }
+      ]
+    },
+    {
+      "id": "database-port-conflict",
+      "source_name": "developer-setup",
+      "source_relative_path": "local/database.md",
+      "guidance": "Connect to the local PostgreSQL service on port 5432.",
+      "expected_status": "potential_conflict",
+      "expected_citations": ["local-services.md#postgresql-port"],
+      "rationale": "The independent local-services guide assigns PostgreSQL port 5433.",
+      "evidence": [
+        {
+          "source_name": "local-services",
+          "revision": "fixture-v1",
+          "path": "local-services.md",
+          "heading_path": ["Developer services", "PostgreSQL"],
+          "anchor": "postgresql-port",
+          "content": "The local PostgreSQL service is published on host port 5433. Use localhost:5433 when connecting from the host machine."
+        }
+      ]
+    }
+  ]
+}
