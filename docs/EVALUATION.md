@@ -67,6 +67,30 @@ small and deterministic, and review metric changes rather than treating one
 score as a universal quality threshold. These metrics assess retrieval and
 citation coverage only—not answer faithfulness, completeness, or usefulness.
 
+## Guidance-review cases
+
+The separate `fixtures/guidance-review-cases.json` dataset contains six
+synthetic cases with proposed expected labels for human review: direct conflicts,
+compatible details, and insufficient evidence. Each record includes a rationale
+and the only evidence the reviewer may cite. Review and revise these labels as
+needed for the intended domain. Run the inspection with a configured Trussium chat
+model:
+
+```bash
+uv run --env-file .env trussium-knowledge-agent evaluate-guidance fixtures/guidance-review-cases.json
+```
+
+This command does not require PostgreSQL or an embedding model because its
+evidence is fixture-supplied rather than retrieved. The case text is sent to the
+configured Trussium chat endpoint, so use a runtime whose data handling is
+appropriate for the fixture and do not replace synthetic text with sensitive
+content. Output shows expected and observed labels, cited locations, rationale,
+and the model assessment case by case. It intentionally does not calculate an
+aggregate accuracy score or establish a pass threshold. Status and citation
+agreement are prompts for human inspection, not calibrated quality measures;
+review divergences before changing prompts or confidence language. These small
+fixtures are illustrative and are not claimed to represent production corpora.
+
 ## Recorded local reference run
 
 On 2026-10-07, the six-query fixture was indexed as 3 Markdown files and 6

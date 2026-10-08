@@ -7,6 +7,7 @@ import pytest
 
 from trussium_knowledge_agent import cli
 from trussium_knowledge_agent.answers import AnswerCitation, AnswerResult
+from trussium_knowledge_agent.chat import ChatCompletion
 from trussium_knowledge_agent.evaluation import EvaluationQuery, ExpectedPassage
 from trussium_knowledge_agent.indexer import IndexResult
 from trussium_knowledge_agent.store import SearchResult
@@ -18,6 +19,16 @@ class FakeRuntime:
 
     def __exit__(self, *_: object) -> None:
         return None
+
+
+class FakeGuidanceChat(FakeRuntime):
+    def complete(self, *, model: str, messages: list[dict[str, str]]) -> ChatCompletion:
+        return ChatCompletion(
+            "fixture-provider",
+            model,
+            '{"status":"insufficient_evidence","assessment":"","citations":[],"confidence":"low"}',
+            "stop",
+        )
 
 
 def test_cli_index_reports_summary(
@@ -143,6 +154,23 @@ def test_cli_evaluate_prints_aggregate_and_query_metrics(
     assert "Recall@1: 1.000" in output
     assert "MRR@1: 1.000" in output
     assert "setup.md#database" in output
+
+
+def test_cli_evaluate_guidance_uses_fixture_without_database_or_embeddings(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("TRUSSIUM_EMBEDDING_MODEL", raising=False)
+    monkeypatch.setenv("TRUSSIUM_CHAT_MODEL", "test-chat-model")
+    monkeypatch.setattr(cli, "TrussiumChatClient", lambda *args, **kwargs: FakeGuidanceChat())
+
+    exit_code = cli.main(["evaluate-guidance", "fixtures/guidance-review-cases.json"])
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert "Guidance-review cases: 6" in output
+    assert "Manual inspection only" in output
+    assert "rollout-strategy-conflict" in output
 
 
 def test_cli_ask_requires_a_chat_model(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -13,6 +13,10 @@ from trussium_knowledge_agent.answers import answer_from_passages
 from trussium_knowledge_agent.chat import TrussiumChatClient
 from trussium_knowledge_agent.embeddings import TrussiumEmbeddingsClient
 from trussium_knowledge_agent.evaluation import evaluate_queries, load_dataset
+from trussium_knowledge_agent.guidance_review_evaluation import (
+    evaluate_guidance_review_cases,
+    load_guidance_review_cases,
+)
 from trussium_knowledge_agent.indexer import index_source, remove_index
 from trussium_knowledge_agent.retrieval import search_index
 
@@ -42,6 +46,10 @@ def _parser() -> argparse.ArgumentParser:
     evaluate.add_argument(
         "--limit", type=_bounded_limit, default=5, help="retrieval results per query (1-20)"
     )
+    review_evaluate = commands.add_parser(
+        "evaluate-guidance", help="inspect guidance-review behavior on synthetic cases"
+    )
+    review_evaluate.add_argument("dataset", help="versioned guidance-review JSON dataset")
     remove = commands.add_parser("remove", help="remove one previously indexed source")
     remove.add_argument("source_root", help="path originally used to index the source")
     return parser
@@ -51,6 +59,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Run the indexing command and return a process exit status."""
     parser = _parser()
     arguments = parser.parse_args(argv)
+    if arguments.command == "evaluate-guidance":
+        return _run_guidance_review_evaluation(parser, arguments.dataset)
     database_url = os.environ.get("DATABASE_URL")
     if not database_url:
         parser.error("DATABASE_URL is required (set it in .env and use uv run --env-file .env)")
@@ -166,6 +176,39 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (RuntimeError, TypeError, ValueError) as error:
         print(f"Error: {error}", file=sys.stderr)
         return 1
+
+
+def _run_guidance_review_evaluation(parser: argparse.ArgumentParser, dataset_path: str) -> int:
+    model = os.environ.get("TRUSSIUM_CHAT_MODEL", "").strip()
+    if not model or model == "replace-with-runtime-chat-model":
+        parser.error("TRUSSIUM_CHAT_MODEL must name a model enabled for chat")
+    base_url = os.environ.get("TRUSSIUM_URL", "http://127.0.0.1:9000")
+    api_key = os.environ.get("TRUSSIUM_API_KEY") or None
+    try:
+        timeout_seconds = float(os.environ.get("TRUSSIUM_TIMEOUT_SECONDS", "30"))
+        cases = load_guidance_review_cases(dataset_path)
+        with TrussiumChatClient(
+            base_url, api_key=api_key, timeout_seconds=timeout_seconds
+        ) as chat_client:
+            results = evaluate_guidance_review_cases(cases, chat_client, model)
+    except (RuntimeError, TypeError, ValueError) as error:
+        print(f"Error: {error}", file=sys.stderr)
+        return 1
+
+    print(f"Guidance-review cases: {len(results)} | chat model: {model}")
+    print("Manual inspection only; status/citation agreement is not calibrated accuracy.")
+    for item in results:
+        review = item.review
+        print(f"\n{item.case.id}")
+        print(f"  expected status: {item.case.expected_status}")
+        print(f"  observed status: {review.status} (agreement: {item.status_agrees})")
+        print(f"  confidence: {review.confidence} (qualitative, uncalibrated)")
+        print(f"  expected citations: {', '.join(item.case.expected_citations) or '(none)'}")
+        print(f"  observed citations: {', '.join(item.cited_locations) or '(none)'}")
+        print(f"  citation agreement: {item.citations_agree}")
+        print(f"  expected rationale: {item.case.rationale}")
+        print(f"  assessment: {review.assessment}")
+    return 0
 
 
 def _bounded_limit(value: str) -> int:
