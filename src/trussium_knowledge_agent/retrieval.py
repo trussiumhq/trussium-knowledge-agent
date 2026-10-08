@@ -13,6 +13,7 @@ def search_index(
     model: str,
     *,
     top_k: int = 5,
+    exclude_source: tuple[str, str] | None = None,
 ) -> list[SearchResult]:
     """Embed one query and find nearest passages of the same model identity."""
     if not query.strip():
@@ -26,4 +27,5 @@ def search_index(
         provider=query_embedding.provider,
         model=query_embedding.model,
         top_k=top_k,
+        exclude_source=exclude_source,
     )

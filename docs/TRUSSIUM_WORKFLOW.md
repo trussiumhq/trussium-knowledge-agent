@@ -19,6 +19,10 @@ composes a tool executor.
   model provider is required for this tool.
 - For `docs.search`, PostgreSQL with pgvector, an indexed corpus, and a Trussium
   runtime model enabled for embeddings.
+- For `docs.review_guidance`, the same indexed corpus and embedding setup plus a
+  Trussium chat model. The supplied excerpt and retrieved passages are sent to
+  the configured runtime for embedding and review; verify its data handling is
+  appropriate before using sensitive material.
 
 Use a secret manager or ignored local environment file for the tool token. Do
 not commit tokens or put them in workflow requests.
@@ -50,8 +54,8 @@ trusted startup configuration—not request data:
 
 The complete example is in
 [`examples/workflow_runtime.py`](../examples/workflow_runtime.py). It registers
-both the `docs.search` and `docs.audit_links` server operations as fixed local
-tool names.
+the `docs.search`, `docs.audit_links`, and `docs.review_guidance` server
+operations as fixed local tool names.
 
 ```python
 import os
@@ -74,6 +78,15 @@ class AuditArguments(BaseModel):
     max_findings: int = Field(default=100, ge=1, le=500)
 
 
+class ReviewGuidanceArguments(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
+
+    source_name: str = Field(min_length=1, max_length=128)
+    source_relative_path: str = Field(min_length=1, max_length=512)
+    guidance: str = Field(min_length=1, max_length=4000)
+    limit: int = Field(default=5, ge=1, le=10)
+
+
 endpoint = os.environ["KNOWLEDGE_AGENT_MCP_URL"]  # include /v1/mcp
 token = os.environ["KNOWLEDGE_AGENT_TOOL_TOKEN"]
 
@@ -93,8 +106,18 @@ audit_tool = RemoteMCPTool(
     bearer_token=token,
 ).registered_tool()
 
+review_guidance_tool = RemoteMCPTool(
+    name="knowledge.review_guidance",
+    endpoint_url=endpoint,
+    remote_name="docs.review_guidance",
+    arguments_model=ReviewGuidanceArguments,
+    bearer_token=token,
+).registered_tool()
+
 app = create_application(
-    tool_executor=ToolExecutor(ToolRegistry((search_tool, audit_tool))),
+    tool_executor=ToolExecutor(
+        ToolRegistry((search_tool, audit_tool, review_guidance_tool))
+    ),
 )
 ```
 
@@ -162,6 +185,34 @@ embeddings. The indexed text is sent to that configured runtime as described
 in the [README](../README.md#index-and-query-a-markdown-repository). Treat
 retrieved passages as untrusted evidence, not instructions.
 
+To request an evidence-bounded review, add a declared step for
+`knowledge.review_guidance`:
+
+```python
+{
+    "id": "review-deployment-guidance",
+    "invocation": {
+        "name": "knowledge.review_guidance",
+        "arguments": {
+            "source_name": "platform-manual",
+            "source_relative_path": "operations/deploy.md",
+            "guidance": "Deployments must use the blue-green strategy.",
+            "limit": 5,
+        },
+    },
+}
+```
+
+The source identifiers are labels used to exclude that same indexed source from
+retrieval; the service never opens the supplied path. Results have one of
+`potential_conflict`, `no_conflict_found`, or `insufficient_evidence`, with
+citations mapped only to passages returned by retrieval. A conflict is a human
+review candidate, not a verdict. `no_conflict_found` does not mean the guidance
+is current. Revision strings are opaque, so the tool cannot establish which
+source is newer or authoritative. Confidence is a qualitative, uncalibrated
+model estimate. Malformed output or unsupported citations fail closed as
+insufficient evidence. The tool does not edit documentation or create issues.
+
 Each workflow step must name a tool already present in the runtime's sealed
 registry. The workflow is limited by the runtime's admission policy, the
 request deadline, and the registered tool's own bounds. A completed response
@@ -172,9 +223,10 @@ audit.
 ## What is and is not implemented
 
 Implemented: Markdown RAG, grounded cited answers, retrieval evaluation, fixed
-read-only MCP search and audit tools, and explicit cross-process Trussium
-workflow composition.
+read-only MCP search, link-audit and evidence-bounded guidance-review tools,
+and explicit cross-process Trussium workflow composition.
 
-Not implemented: autonomous planning, semantic detection of stale guidance,
-automatic edits, GitHub issue or pull-request creation, and human-approval
-flows for external writes. See the [roadmap](ROADMAP.md) for remaining work.
+Not implemented: autonomous planning, determining guidance freshness or source
+authority, automatic edits, GitHub issue or pull-request creation, and
+human-approval flows for external writes. See the [roadmap](ROADMAP.md) for
+remaining work.

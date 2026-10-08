@@ -15,8 +15,9 @@ untrusted data.
 ## Decision
 
 - Expose application-owned fixed tools at the authenticated `POST /v1/mcp`
-  endpoint: `docs.search` for indexed evidence and `docs.audit_links` for a
-  deterministic local Markdown link check.
+  endpoint: `docs.search` for indexed evidence, `docs.audit_links` for a
+  deterministic local Markdown link check, and `docs.review_guidance` for an
+  evidence-bounded, advisory comparison of a supplied excerpt.
 - Keep the name and Pydantic argument schema fixed in application code. Reject
   all unknown tool names, extra arguments, and caller-provided destinations.
 - Require a separately configured bearer token; when the token is absent, the
@@ -25,6 +26,12 @@ untrusted data.
 - Restrict the tool to retrieval from the already indexed corpus, with bounded
   query length, result count, request bytes, and runtime timeout. Return source
   metadata alongside evidence.
+- For guidance review, treat the source name and relative path as metadata only;
+  exclude matching indexed passages and never open the caller-supplied path.
+  Validate model output against retrieved citation IDs, require inline citations,
+  and fail closed on malformed or unsupported output. Do not infer recency or
+  authority from opaque revision identifiers. Label confidence as qualitative
+  and uncalibrated.
 - Configure the audit root only through operator environment configuration.
   Bound file, link, per-file byte, and finding counts; reject symlink traversal,
   ignore external URLs, and never write to the source tree.
@@ -40,6 +47,9 @@ untrusted data.
   Knowledge Agent without enabling arbitrary tools in the packaged runtime.
 - The endpoint is disabled by default and must not be exposed without HTTPS and
   a secret manager in deployed environments.
+- Guidance excerpts and retrieved evidence are sent to the configured Trussium
+  embedding and chat endpoints. Operators must ensure those endpoints' data
+  handling is appropriate for the indexed material and supplied excerpt.
 - The runtime adapter, typed Python SDK workflow method, authenticated
   Knowledge Agent tools, and first end-to-end audit workflow are implemented
   and validated. The integration does not add automatic source edits, issue

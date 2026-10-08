@@ -56,8 +56,10 @@ write capabilities remain future work.
 - [x] Register the remote tools explicitly in a custom Trussium runtime
   application and call them through the typed Python SDK workflow API.
 - [x] Validate the local SDK-to-runtime-to-Knowledge-Agent audit workflow.
-- [ ] Add evidence-backed detection of stale guidance with citations and
-  confidence; preserve the read-only default and review boundary.
+- [x] Add evidence-backed candidate conflict review for supplied guidance
+  excerpts, with validated citations and a read-only review boundary. This does
+  not determine which source is newer or authoritative; confidence is
+  qualitative and uncalibrated.
 - [ ] Consider human-approved issue creation only after approval UX, narrowly
   scoped credentials, audit events, and recovery behavior are designed.
 - [ ] Expand end-to-end checks for denied tools, cancellation, timeout, and
@@ -66,8 +68,8 @@ write capabilities remain future work.
 Exit criteria for the completed slice: the runtime invokes only explicitly
 registered tools; the audit is bounded and read-only; findings use
 root-relative source locations; and the workflow can be traced through runtime
-execution results. Semantic stale-content analysis and external writes are not
-part of this completed slice. See
+execution results. Candidate conflict review is advisory and does not establish
+freshness. External writes are not part of this completed slice. See
 [`TRUSSIUM_WORKFLOW.md`](TRUSSIUM_WORKFLOW.md) for setup and limits.
 
 ## Milestone 3 — Evaluation and deployment guidance

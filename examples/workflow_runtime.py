@@ -30,6 +30,15 @@ class AuditArguments(BaseModel):
     max_findings: int = Field(default=100, ge=1, le=500)
 
 
+class ReviewGuidanceArguments(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
+
+    source_name: str = Field(min_length=1, max_length=128)
+    source_relative_path: str = Field(min_length=1, max_length=512)
+    guidance: str = Field(min_length=1, max_length=4000)
+    limit: int = Field(default=5, ge=1, le=10)
+
+
 endpoint = os.environ["KNOWLEDGE_AGENT_MCP_URL"]
 token = os.environ["KNOWLEDGE_AGENT_TOOL_TOKEN"]
 allow_local_http = os.environ.get("KNOWLEDGE_AGENT_ALLOW_LOCAL_HTTP") == "true"
@@ -52,6 +61,14 @@ audit_tool = RemoteMCPTool(
     allow_local_http=allow_local_http,
 ).registered_tool()
 
+review_guidance_tool = RemoteMCPTool(
+    name="knowledge.review_guidance",
+    endpoint_url=endpoint,
+    remote_name="docs.review_guidance",
+    arguments_model=ReviewGuidanceArguments,
+    bearer_token=token,
+).registered_tool()
+
 app = create_application(
-    tool_executor=ToolExecutor(ToolRegistry((search_tool, audit_tool))),
+    tool_executor=ToolExecutor(ToolRegistry((search_tool, audit_tool, review_guidance_tool))),
 )

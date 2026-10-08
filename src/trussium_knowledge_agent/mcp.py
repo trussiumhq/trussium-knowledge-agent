@@ -10,10 +10,15 @@ from typing import Any
 import psycopg
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from trussium_knowledge_agent.auditing import MAX_AUDIT_FINDINGS, audit_markdown_links
+from trussium_knowledge_agent.chat import TrussiumChatClient
 from trussium_knowledge_agent.embeddings import TrussiumEmbeddingsClient
+from trussium_knowledge_agent.guidance_review import (
+    review_guidance,
+    validate_source_relative_path,
+)
 from trussium_knowledge_agent.retrieval import search_index
 
 router = APIRouter()
@@ -46,6 +51,23 @@ class AuditLinksArguments(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     max_findings: int = Field(default=100, ge=1, le=MAX_AUDIT_FINDINGS)
+
+
+class ReviewGuidanceArguments(BaseModel):
+    """Bounded input identifying an excerpt and its independent evidence query."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
+
+    source_name: str = Field(min_length=1, max_length=128)
+    source_relative_path: str = Field(min_length=1, max_length=512)
+    guidance: str = Field(min_length=1, max_length=4000)
+    limit: int = Field(default=5, ge=1, le=10)
+
+    @field_validator("source_relative_path")
+    @classmethod
+    def validate_source_path(cls, value: str) -> str:
+        validate_source_relative_path(value)
+        return value
 
 
 def _response(request_id: int | str | None, *, result: dict[str, Any]) -> dict[str, Any]:
@@ -135,6 +157,81 @@ async def mcp_tools(request: Request) -> JSONResponse:
         except (OSError, RuntimeError, TypeError, ValueError):
             print("MCP documentation link audit failed.", file=sys.stderr)
             return _error(message.id, -32000, "The documentation link audit failed.")
+        return JSONResponse(
+            content=_response(
+                message.id,
+                result={"isError": False, "content": [{"type": "json", "json": output}]},
+            )
+        )
+
+    if name == "docs.review_guidance":
+        try:
+            review_arguments = ReviewGuidanceArguments.model_validate(raw_arguments)
+        except ValidationError:
+            return _error(message.id, -32602, "Tool arguments are invalid.")
+        database_url = os.environ.get("DATABASE_URL", "").strip()
+        embedding_model = os.environ.get("TRUSSIUM_EMBEDDING_MODEL", "").strip()
+        chat_model = os.environ.get("TRUSSIUM_CHAT_MODEL", "").strip()
+        if (
+            not database_url
+            or not embedding_model
+            or embedding_model == "replace-with-runtime-embedding-model"
+            or not chat_model
+            or chat_model == "replace-with-runtime-chat-model"
+        ):
+            return _error(message.id, -32000, "The guidance review service is unavailable.")
+        base_url = os.environ.get("TRUSSIUM_URL", "http://127.0.0.1:9000")
+        api_key = os.environ.get("TRUSSIUM_API_KEY") or None
+        try:
+            timeout_seconds = float(os.environ.get("TRUSSIUM_TIMEOUT_SECONDS", "30"))
+            if not 0 < timeout_seconds <= 120:
+                raise ValueError("unsupported timeout")
+            with TrussiumEmbeddingsClient(
+                base_url, api_key=api_key, timeout_seconds=timeout_seconds
+            ) as embeddings_client:
+                passages = search_index(
+                    review_arguments.guidance,
+                    database_url,
+                    embeddings_client,
+                    embedding_model,
+                    top_k=review_arguments.limit,
+                    exclude_source=(
+                        review_arguments.source_name,
+                        review_arguments.source_relative_path,
+                    ),
+                )
+            with TrussiumChatClient(
+                base_url, api_key=api_key, timeout_seconds=timeout_seconds
+            ) as chat_client:
+                review = review_guidance(
+                    review_arguments.guidance,
+                    source_name=review_arguments.source_name,
+                    source_relative_path=review_arguments.source_relative_path,
+                    passages=passages,
+                    chat_client=chat_client,
+                    model=chat_model,
+                )
+        except (psycopg.Error, RuntimeError, TypeError, ValueError):
+            print("MCP guidance review failed.", file=sys.stderr)
+            return _error(message.id, -32000, "The guidance review failed.")
+
+        output = {
+            "status": review.status,
+            "confidence": review.confidence,
+            "confidence_note": "Qualitative model estimate; not calibrated.",
+            "assessment": review.assessment,
+            "citations": [
+                {
+                    "reference_id": citation.reference_id,
+                    "display_name": citation.source.display_name,
+                    "revision": citation.source.revision,
+                    "relative_path": citation.source.relative_path,
+                    "heading_path": list(citation.source.heading_path),
+                    "heading_anchor": citation.source.heading_anchor,
+                }
+                for citation in review.citations
+            ],
+        }
         return JSONResponse(
             content=_response(
                 message.id,

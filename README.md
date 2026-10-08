@@ -70,12 +70,19 @@ The fixed `docs.search` tool accepts a query up to 4,000 characters and a result
 limit from 1 to 10, returning retrieved passages with source paths, headings,
 revisions, and scores. The fixed `docs.audit_links` tool performs a deterministic
 read-only link check over the operator-configured `KNOWLEDGE_AGENT_AUDIT_ROOT`;
-its only argument is a bounded `max_findings` value. It does not accept paths or
-URLs from callers, fetch network destinations, follow symlinks, or change files.
-It reports local missing targets, unsafe paths, and missing Markdown anchors.
-External URLs are ignored. Reference-style Markdown links and raw HTML links
-are not currently checked. Scans are bounded by file count, bytes, link count,
-and findings. See
+its only argument is a bounded `max_findings` value. `docs.review_guidance`
+compares a supplied excerpt (up to 4,000 characters) with up to 10 independent
+indexed passages and returns a cited potential-conflict assessment. It requires
+PostgreSQL, an embedding model, and a chat model on the configured Trussium
+runtime. This is advisory: revisions are opaque, freshness/authority are not
+inferred, and confidence is qualitative and uncalibrated. It never reads the
+caller-supplied source path or changes files. See
+[`docs/TRUSSIUM_WORKFLOW.md`](docs/TRUSSIUM_WORKFLOW.md) for invocation and
+privacy details. The link-audit tool does not accept paths or URLs from callers,
+fetch network destinations, follow symlinks, or change files. It reports local
+missing targets, unsafe paths, and missing Markdown anchors. External URLs are
+ignored. Reference-style Markdown links and raw HTML links are not currently
+checked. Scans are bounded by file count, bytes, link count, and findings. See
 [`docs/DOCUMENTATION_AUDIT.md`](docs/DOCUMENTATION_AUDIT.md) for limits and
 examples. Unknown tools and extra arguments are rejected. Indexed passages are
 untrusted evidence; this endpoint does not interpret them as instructions or
