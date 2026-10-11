@@ -84,8 +84,12 @@ Planned:
   answer truth or completeness.
 - [x] Document self-hosted deployment, database backup/restore, configuration,
   health checks, and troubleshooting.
-- Add optional source connectors only when their access and deletion semantics
-  are documented and tested.
+- [x] Define the GitHub Markdown connector's least-privilege access, immutable
+  revision snapshots, refresh failure behavior, authorization-loss handling,
+  and deletion semantics in [ADR 0005](adr/0005-github-markdown-source-connector.md).
+- [ ] Implement the GitHub Markdown connector only after lifecycle state,
+  retrieval filtering, quarantine expiry, backup-aware deletion, bounded
+  snapshot validation, and deterministic failure tests are in place.
 
 ## Out of scope until separately proposed
 
