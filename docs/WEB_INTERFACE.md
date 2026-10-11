@@ -60,4 +60,5 @@ or ignored local environment file; never put them in browser code.
 
 The page uses same-origin requests and renders answer/citation values using DOM
 text nodes. It does not interpret model output as HTML or allow the model to
-choose source links.
+choose source links. See the [self-hosted operations guide](OPERATIONS.md) for
+dependency health checks, backup and recovery procedures, and troubleshooting.

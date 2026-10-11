@@ -82,7 +82,7 @@ Planned:
 - [ ] Expand reviewed answer-quality examples only when a safe, reproducible
   scoring method is defined; current retrieval metrics do not assess generated
   answer truth or completeness.
-- Document self-hosted deployment, database backup/restore, configuration,
+- [x] Document self-hosted deployment, database backup/restore, configuration,
   health checks, and troubleshooting.
 - Add optional source connectors only when their access and deletion semantics
   are documented and tested.

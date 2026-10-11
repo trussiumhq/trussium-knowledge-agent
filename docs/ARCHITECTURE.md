@@ -136,4 +136,6 @@ The starter Compose file runs PostgreSQL with the pgvector extension on
 `127.0.0.1:5433`. The Trussium runtime remains an independently configured
 service, normally on port `9000`. The FastAPI application runs on port `8000`.
 Production deployments must supply managed secrets, backups, TLS, and a
-network policy appropriate to their environment.
+network policy appropriate to their environment. See the
+[self-hosted operations guide](OPERATIONS.md) for configuration, health checks,
+PostgreSQL backup/restore, and troubleshooting procedures.
