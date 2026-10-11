@@ -21,7 +21,9 @@ Markdown link audit; it does not autonomously edit repositories. See the
 - An existing Trussium runtime for chat and embeddings; reranking integration
   remains future work.
 - PostgreSQL with pgvector for document chunks, source metadata, and vectors.
-- Local Markdown repositories as the first ingestion source.
+- Explicitly selected local Markdown repositories and bounded, manually
+  refreshed public GitHub Markdown snapshots pinned to a full commit SHA.
+- No private-repository authentication, automatic refresh, or webhook sync.
 - An opt-in Trussium runtime with explicitly registered tools for bounded
   documentation search and deterministic audits. External issue or pull
   request creation is not implemented.
@@ -59,6 +61,18 @@ Docker volume. The browser and CLI call the separately configured Trussium
 runtime APIs. For production network boundaries, dependency checks, backup,
 restore, and troubleshooting, see the
 [self-hosted operations guide](docs/OPERATIONS.md).
+
+For a public GitHub repository, the CLI can build a complete bounded Markdown
+snapshot before atomically replacing the indexed revision:
+
+```bash
+uv run --env-file .env trussium-knowledge-agent index-github OWNER/REPOSITORY --ref main
+```
+
+The command prints the full source ID for later removal with
+`trussium-knowledge-agent remove-source SOURCE_ID`. See the
+[public GitHub refresh and source lifecycle runbook](docs/OPERATIONS.md#explicit-public-github-refresh)
+for limits, refresh behavior, and recovery safeguards.
 
 ### Read-only MCP tool endpoint
 

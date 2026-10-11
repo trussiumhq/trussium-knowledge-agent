@@ -12,10 +12,11 @@ import pytest
 
 from trussium_knowledge_agent.answers import answer_from_passages
 from trussium_knowledge_agent.chat import ChatCompletion
-from trussium_knowledge_agent.chunking import Chunk
+from trussium_knowledge_agent.chunking import Chunk, parse_markdown
 from trussium_knowledge_agent.embeddings import EmbeddingsBatch
 from trussium_knowledge_agent.evaluation import EvaluationQuery, ExpectedPassage, evaluate_queries
-from trussium_knowledge_agent.indexer import index_source, remove_index
+from trussium_knowledge_agent.github_snapshot import GitHubSnapshot, GitHubSnapshotError
+from trussium_knowledge_agent.indexer import index_public_github_source, index_source, remove_index
 from trussium_knowledge_agent.lifecycle_ledger import append_lifecycle_event
 from trussium_knowledge_agent.retrieval import search_index
 from trussium_knowledge_agent.store import (
@@ -605,3 +606,78 @@ def test_restore_reconciliation_identity_mismatch_rolls_back_all_changes(
     assert dict(states) == {first_id: "active", second_id: "active"}
     remove_source(DATABASE_URL or "", first_id)
     remove_source(DATABASE_URL or "", second_id)
+
+
+def test_public_github_refresh_is_pinned_transactional_searchable_and_removable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    identity = "github.com:repository:424242"
+    source_id = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+
+    def make_snapshot(revision: str, content: str) -> GitHubSnapshot:
+        raw = content.encode("utf-8")
+        chunks = parse_markdown(
+            relative_path="guide.md",
+            source=content,
+            content_hash=hashlib.sha256(raw).hexdigest(),
+            max_chars=1600,
+            overlap_chars=200,
+        )
+        return GitHubSnapshot(424242, "acme/docs", revision, 1, tuple(chunks))
+
+    current = make_snapshot("a" * 40, "# Guide\n\nGreen apple snapshot.")
+
+    class SnapshotEmbeddingsClient:
+        def embed(self, *, model: str, inputs: Sequence[str]) -> EmbeddingsBatch:
+            vectors = tuple(
+                (0.0, 0.0, 1.0) if "ocean" in text.lower() else (0.0, 1.0, 0.0) for text in inputs
+            )
+            return EmbeddingsBatch("snapshot-provider", model, vectors)
+
+    embeddings_client = SnapshotEmbeddingsClient()
+    monkeypatch.setattr(
+        "trussium_knowledge_agent.indexer.fetch_public_github_snapshot",
+        lambda *_args, **_kwargs: current,
+    )
+    first = index_public_github_source(
+        "acme/docs", "main", DATABASE_URL or "", embeddings_client, "test-model"
+    )
+    assert first.source_id == source_id
+    assert first.revision == "a" * 40
+    previous_rows = fetch_source_chunks(DATABASE_URL or "", source_id)
+
+    monkeypatch.setattr(
+        "trussium_knowledge_agent.indexer.fetch_public_github_snapshot",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            GitHubSnapshotError("transient GitHub failure")
+        ),
+    )
+    with pytest.raises(GitHubSnapshotError, match="transient"):
+        index_public_github_source(
+            "acme/docs", "main", DATABASE_URL or "", embeddings_client, "test-model"
+        )
+    assert fetch_source_chunks(DATABASE_URL or "", source_id) == previous_rows
+
+    current = make_snapshot("b" * 40, "# Guide\n\nBlue ocean replacement.")
+    monkeypatch.setattr(
+        "trussium_knowledge_agent.indexer.fetch_public_github_snapshot",
+        lambda *_args, **_kwargs: current,
+    )
+    refreshed = index_public_github_source(
+        "acme/docs", "main", DATABASE_URL or "", embeddings_client, "test-model"
+    )
+    rows = fetch_source_chunks(DATABASE_URL or "", source_id)
+    assert refreshed.revision == "b" * 40
+    assert len(rows) == 1
+    assert rows[0][1] == "guide.md"
+    assert "Blue ocean replacement." in rows[0][6]
+    assert "Green apple snapshot." not in rows[0][6]
+    results = search_chunks(
+        DATABASE_URL or "",
+        query_vector=(0.0, 0.0, 1.0),
+        provider="snapshot-provider",
+        model="test-model",
+    )
+    assert any(result.display_name == "acme/docs" for result in results)
+    assert remove_source(DATABASE_URL or "", source_id)
+    assert fetch_source_chunks(DATABASE_URL or "", source_id) == []

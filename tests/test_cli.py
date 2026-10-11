@@ -58,6 +58,46 @@ def test_cli_index_reports_summary(
     assert "Indexed 2 Markdown files into 3 chunks" in capsys.readouterr().out
 
 
+def test_cli_index_github_reports_full_commit_and_source_id(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("DATABASE_URL", "postgresql://example")
+    monkeypatch.setenv("TRUSSIUM_EMBEDDING_MODEL", "test-model")
+    monkeypatch.setattr(cli, "TrussiumEmbeddingsClient", lambda *args, **kwargs: FakeRuntime())
+    monkeypatch.setattr(
+        cli,
+        "index_public_github_source",
+        lambda repository, ref, database_url, client, model, **kwargs: IndexResult(
+            source_id="a" * 64,
+            display_name=repository,
+            revision="b" * 40,
+            file_count=2,
+            chunk_count=3,
+        ),
+    )
+
+    exit_code = cli.main(["index-github", "acme/docs", "--ref", "main"])
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert "public GitHub repository acme/docs" in output
+    assert "b" * 40 in output
+    assert "a" * 64 in output
+
+
+def test_cli_remove_source_accepts_full_source_id(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    source_id = "a" * 64
+    monkeypatch.setenv("DATABASE_URL", "postgresql://example")
+    monkeypatch.setattr(cli, "remove_source", lambda _url, identity: identity == source_id)
+
+    exit_code = cli.main(["remove-source", source_id])
+
+    assert exit_code == 0
+    assert capsys.readouterr().out == "Removed indexed source.\n"
+
+
 def test_cli_search_prints_citation_and_score(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

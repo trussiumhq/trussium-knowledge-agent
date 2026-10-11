@@ -61,18 +61,20 @@ runtime.
    rendering treats answer and source strings as text, not HTML; it displays
    source paths and heading anchors without serving arbitrary local files.
 
-Ingestion is repeatable and idempotent for an explicitly selected local source.
-Only Markdown is supported initially. A future GitHub Markdown connector has a
-documented access, snapshot, refresh, and deletion contract, but is not
-implemented. Other formats and external connectors require separate parser,
-access-control, and deletion decisions. See
+Ingestion is repeatable and idempotent for explicitly selected local sources
+and manually refreshed public GitHub repositories. GitHub snapshots use fixed
+GitHub API/raw-content hosts, are pinned to a commit SHA, and are bounded before
+index replacement. Private repositories, scheduled refresh, and webhooks are
+not implemented. Other formats and external connectors require separate
+parser, access-control, and deletion decisions. See
 [`ADR 0005`](adr/0005-github-markdown-source-connector.md).
 
-The first implementation stores only a SHA-256 identifier derived from the
-canonical local source path, not the absolute path itself. It records the
-repository name, optional Git `HEAD` revision, per-file content hashes,
-relative paths, heading paths/anchors, and deterministic chunk IDs. Index
-replacement and migration application run in one database transaction. A
+Local source IDs are SHA-256 hashes of the canonical source path, not stored
+absolute paths. GitHub source IDs are hashes of the host and immutable numeric
+repository ID; display metadata holds its current owner/name. Both record a
+pinned revision where available, per-file content hashes, relative paths,
+heading paths/anchors, and deterministic chunk IDs. Index replacement and
+migration application run in one database transaction. A
 Markdown file larger than 5 MiB or one that is not valid UTF-8 causes indexing
 to fail before database state is changed. `.git` metadata is excluded.
 
@@ -81,7 +83,7 @@ bounded immutable external identity when applicable. A source is either
 `active` or `access_lost`; access-lost chunks remain stored but are excluded by
 the retrieval SQL query. GitHub identity must match before a quarantined source
 can be reactivated. The 30-day quarantine has an explicit bounded purge
-operation. The application does not yet connect to GitHub or automatically
+operation. The application does not authenticate to GitHub or automatically
 detect revoked access. Deletion and confirmed access loss are also recorded in
 a restrictive, append-only JSON Lines journal outside PostgreSQL backups. A
 recovered database must be reconciled against that journal before application

@@ -93,9 +93,12 @@ Planned:
 - [x] Add an append-only external source lifecycle journal and transactional,
   fail-closed reconciliation for database restores; keep private GitHub source
   ingestion disabled until operators validate this recovery boundary.
-- [ ] Implement GitHub authentication and bounded Markdown snapshots, then
-  verify refresh behavior and recovery with the external lifecycle journal
-  before enabling private-repository ingestion.
+- [x] Implement explicit, bounded public GitHub Markdown snapshots pinned to
+  commit SHAs; verify failed refresh preservation, database replacement, and
+  lifecycle-aware removal.
+- [ ] Design and implement least-privilege private GitHub authentication only
+  after the external lifecycle journal and restore procedure have been
+  rehearsed; keep private sources disabled until then.
 
 ## Out of scope until separately proposed
 
