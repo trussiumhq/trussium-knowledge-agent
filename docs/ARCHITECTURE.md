@@ -62,8 +62,11 @@ runtime.
    source paths and heading anchors without serving arbitrary local files.
 
 Ingestion is repeatable and idempotent for an explicitly selected local source.
-Only Markdown is supported initially. Other formats and external connectors
-require separate parser, access-control, and deletion decisions.
+Only Markdown is supported initially. A future GitHub Markdown connector has a
+documented access, snapshot, refresh, and deletion contract, but is not
+implemented. Other formats and external connectors require separate parser,
+access-control, and deletion decisions. See
+[`ADR 0005`](adr/0005-github-markdown-source-connector.md).
 
 The first implementation stores only a SHA-256 identifier derived from the
 canonical local source path, not the absolute path itself. It records the
