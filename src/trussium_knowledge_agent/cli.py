@@ -19,7 +19,7 @@ from trussium_knowledge_agent.guidance_review_evaluation import (
 )
 from trussium_knowledge_agent.indexer import index_source, remove_index
 from trussium_knowledge_agent.retrieval import search_index
-from trussium_knowledge_agent.store import purge_expired_sources
+from trussium_knowledge_agent.store import purge_expired_sources, reconcile_source_lifecycle
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -62,6 +62,10 @@ def _parser() -> argparse.ArgumentParser:
         default=100,
         help="maximum expired sources to purge in one batch (1-1000)",
     )
+    commands.add_parser(
+        "reconcile-source-lifecycle",
+        help="apply durable lifecycle restrictions to a restored database",
+    )
     return parser
 
 
@@ -83,6 +87,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         if arguments.command == "purge-expired-sources":
             purged = purge_expired_sources(database_url, limit=arguments.limit)
             print(f"Purged {purged} expired source(s).")
+            return 0
+        if arguments.command == "reconcile-source-lifecycle":
+            ledger_path = os.environ.get("KNOWLEDGE_AGENT_LIFECYCLE_LEDGER_PATH")
+            if not ledger_path:
+                parser.error("KNOWLEDGE_AGENT_LIFECYCLE_LEDGER_PATH is required")
+            deleted, quarantined, missing = reconcile_source_lifecycle(
+                database_url, ledger_path=ledger_path
+            )
+            print(
+                f"Reconciled source lifecycle: {deleted} deleted, {quarantined} quarantined, "
+                f"{missing} already absent."
+            )
             return 0
 
         model = os.environ.get("TRUSSIUM_EMBEDDING_MODEL", "").strip()
@@ -187,7 +203,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     except psycopg.Error:
         print("Error: PostgreSQL operation failed.", file=sys.stderr)
         return 1
-    except (RuntimeError, TypeError, ValueError) as error:
+    except (OSError, RuntimeError, TypeError, ValueError) as error:
         print(f"Error: {error}", file=sys.stderr)
         return 1
 
