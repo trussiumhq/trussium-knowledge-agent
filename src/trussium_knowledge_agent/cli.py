@@ -19,6 +19,7 @@ from trussium_knowledge_agent.guidance_review_evaluation import (
 )
 from trussium_knowledge_agent.indexer import index_source, remove_index
 from trussium_knowledge_agent.retrieval import search_index
+from trussium_knowledge_agent.store import purge_expired_sources
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -52,6 +53,15 @@ def _parser() -> argparse.ArgumentParser:
     review_evaluate.add_argument("dataset", help="versioned guidance-review JSON dataset")
     remove = commands.add_parser("remove", help="remove one previously indexed source")
     remove.add_argument("source_root", help="path originally used to index the source")
+    purge = commands.add_parser(
+        "purge-expired-sources", help="purge sources past their access-loss retention deadline"
+    )
+    purge.add_argument(
+        "--limit",
+        type=_bounded_purge_limit,
+        default=100,
+        help="maximum expired sources to purge in one batch (1-1000)",
+    )
     return parser
 
 
@@ -69,6 +79,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         if arguments.command == "remove":
             removed = remove_index(arguments.source_root, database_url)
             print("Removed indexed source." if removed else "No indexed source matched that path.")
+            return 0
+        if arguments.command == "purge-expired-sources":
+            purged = purge_expired_sources(database_url, limit=arguments.limit)
+            print(f"Purged {purged} expired source(s).")
             return 0
 
         model = os.environ.get("TRUSSIUM_EMBEDDING_MODEL", "").strip()
@@ -228,6 +242,16 @@ def _bounded_answer_limit(value: str) -> int:
         raise argparse.ArgumentTypeError("limit must be an integer from 1 to 10") from error
     if not 1 <= limit <= 10:
         raise argparse.ArgumentTypeError("limit must be between 1 and 10")
+    return limit
+
+
+def _bounded_purge_limit(value: str) -> int:
+    try:
+        limit = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("limit must be an integer from 1 to 1000") from error
+    if not 1 <= limit <= 1000:
+        raise argparse.ArgumentTypeError("limit must be between 1 and 1000")
     return limit
 
 

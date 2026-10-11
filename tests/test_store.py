@@ -69,6 +69,7 @@ def test_search_excludes_the_reviewed_source_using_bound_parameters(
     query = observed["query"]
     assert isinstance(query, str)
     assert "NOT (s.display_name = %s AND c.relative_path = %s)" in query
+    assert "s.lifecycle_state = 'active'" in query
     assert observed["parameters"] == (
         "[1.0,0.0]",
         "provider",
@@ -79,3 +80,30 @@ def test_search_excludes_the_reviewed_source_using_bound_parameters(
         "[1.0,0.0]",
         5,
     )
+
+
+@pytest.mark.parametrize("limit", [0, 1001])
+def test_purge_rejects_unbounded_batch_sizes(limit: int) -> None:
+    with pytest.raises(ValueError, match="limit"):
+        store.purge_expired_sources("not-used", limit=limit)
+
+
+def test_github_sources_require_bounded_identity_before_database_access(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        psycopg,
+        "connect",
+        lambda *_: pytest.fail("invalid source identity must fail before connecting"),
+    )
+
+    with pytest.raises(ValueError, match="immutable identity"):
+        store.persist_source(
+            "not-used",
+            source_id="a" * 64,
+            display_name="manuals",
+            revision=None,
+            chunks=[],
+            source_kind="github",
+            source_identity="",
+        )
