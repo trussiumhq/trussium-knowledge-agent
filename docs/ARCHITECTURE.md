@@ -81,8 +81,12 @@ bounded immutable external identity when applicable. A source is either
 `active` or `access_lost`; access-lost chunks remain stored but are excluded by
 the retrieval SQL query. GitHub identity must match before a quarantined source
 can be reactivated. The 30-day quarantine has an explicit bounded purge
-operation. These are lifecycle primitives only: the application does not yet
-connect to GitHub or automatically detect revoked access.
+operation. The application does not yet connect to GitHub or automatically
+detect revoked access. Deletion and confirmed access loss are also recorded in
+a restrictive, append-only JSON Lines journal outside PostgreSQL backups. A
+recovered database must be reconciled against that journal before application
+traffic is enabled; reconciliation can delete or quarantine sources but never
+reactivates them. See [`ADR 0006`](adr/0006-restore-safe-source-lifecycle.md).
 
 Vectors are stored in pgvector's variable-dimension `vector` type. Each row
 records provider, resolved model, and dimension, and retrieval filters on all

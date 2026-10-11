@@ -107,3 +107,25 @@ def test_github_sources_require_bounded_identity_before_database_access(
             source_kind="github",
             source_identity="",
         )
+
+
+def test_github_sources_require_external_lifecycle_journal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("KNOWLEDGE_AGENT_LIFECYCLE_LEDGER_PATH", raising=False)
+    monkeypatch.setattr(
+        psycopg,
+        "connect",
+        lambda *_: pytest.fail("GitHub sources require lifecycle storage before connecting"),
+    )
+
+    with pytest.raises(ValueError, match="KNOWLEDGE_AGENT_LIFECYCLE_LEDGER_PATH"):
+        store.persist_source(
+            "not-used",
+            source_id="a" * 64,
+            display_name="manuals",
+            revision=None,
+            chunks=[],
+            source_kind="github",
+            source_identity="github.com:repository:123",
+        )

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -12,6 +13,11 @@ import psycopg
 
 from trussium_knowledge_agent.chunking import Chunk
 from trussium_knowledge_agent.embeddings import MAX_VECTOR_DIMENSIONS
+from trussium_knowledge_agent.lifecycle_ledger import (
+    LifecycleEvent,
+    append_lifecycle_event,
+    read_lifecycle_events,
+)
 
 _MIGRATIONS = Path(__file__).parent / "migrations"
 SourceKind = Literal["local", "github"]
@@ -48,6 +54,8 @@ def persist_source(
 ) -> None:
     """Apply schema and atomically replace one source and its chunk records."""
     _validate_source_identity(source_kind, source_identity)
+    if source_kind == "github":
+        _configured_ledger_path(None)
     with psycopg.connect(database_url) as connection:
         _apply_migrations(connection)
         cursor = connection.execute(
@@ -124,12 +132,36 @@ def persist_source(
 
 def remove_source(database_url: str, source_id: str) -> bool:
     """Delete a source and its chunks with foreign-key cascade semantics."""
+    ledger_path = _configured_ledger_path(None)
     with psycopg.connect(database_url) as connection:
         _apply_migrations(connection)
-        cursor = connection.execute(
-            "DELETE FROM knowledge_sources WHERE source_id = %s", (source_id,)
-        )
-        return cursor.rowcount > 0
+        row = connection.execute(
+            """SELECT source_kind, source_identity, lifecycle_state
+               FROM knowledge_sources WHERE source_id = %s FOR UPDATE""",
+            (source_id,),
+        ).fetchone()
+        if row is None:
+            return False
+        source_kind, source_identity, lifecycle_state = row
+        if lifecycle_state != "deleted":
+            connection.execute(
+                """UPDATE knowledge_sources
+                   SET lifecycle_state = 'deleted', access_lost_at = NULL,
+                       quarantine_expires_at = NULL, deleted_at = now()
+                   WHERE source_id = %s""",
+                (source_id,),
+            )
+    append_lifecycle_event(
+        ledger_path,
+        source_id=source_id,
+        source_kind=source_kind,
+        source_identity=source_identity,
+        event_type="deleted",
+    )
+    with psycopg.connect(database_url) as connection:
+        _apply_migrations(connection)
+        connection.execute("DELETE FROM knowledge_sources WHERE source_id = %s", (source_id,))
+    return True
 
 
 def mark_source_access_lost(
@@ -137,6 +169,7 @@ def mark_source_access_lost(
     source_id: str,
 ) -> bool:
     """Hide a GitHub source from retrieval and start its fixed quarantine once."""
+    ledger_path = _configured_ledger_path(None)
     with psycopg.connect(database_url) as connection:
         _apply_migrations(connection)
         cursor = connection.execute(
@@ -147,7 +180,23 @@ def mark_source_access_lost(
                  AND lifecycle_state = 'active'""",
             (SOURCE_QUARANTINE_DAYS, source_id),
         )
-        return cursor.rowcount == 1
+        changed = cursor.rowcount == 1
+        row = connection.execute(
+            """SELECT source_kind, source_identity, lifecycle_state
+               FROM knowledge_sources WHERE source_id = %s""",
+            (source_id,),
+        ).fetchone()
+        if row is None or row[0] != "github" or row[2] not in ("active", "access_lost"):
+            return False
+        source_kind, source_identity = row[:2]
+    append_lifecycle_event(
+        ledger_path,
+        source_id=source_id,
+        source_kind=source_kind,
+        source_identity=source_identity,
+        event_type="access_lost",
+    )
+    return changed
 
 
 def reactivate_source(
@@ -180,23 +229,90 @@ def purge_expired_sources(
     """Purge an ordered, bounded batch of sources whose quarantine has expired."""
     if not 1 <= limit <= MAX_PURGE_BATCH_SIZE:
         raise ValueError(f"limit must be between 1 and {MAX_PURGE_BATCH_SIZE}")
+    ledger_path = _configured_ledger_path(None)
     with psycopg.connect(database_url) as connection:
         _apply_migrations(connection)
-        cursor = connection.execute(
+        rows = connection.execute(
             """WITH expired AS (
                    SELECT source_id FROM knowledge_sources
-                   WHERE lifecycle_state = 'access_lost'
-                     AND quarantine_expires_at <= now()
-                   ORDER BY quarantine_expires_at, source_id
+                   WHERE lifecycle_state = 'deleted'
+                      OR (lifecycle_state = 'access_lost' AND quarantine_expires_at <= now())
+                   ORDER BY COALESCE(quarantine_expires_at, deleted_at), source_id
                    LIMIT %s
                    FOR UPDATE SKIP LOCKED
                )
-               DELETE FROM knowledge_sources AS source
-               USING expired
-               WHERE source.source_id = expired.source_id""",
+               UPDATE knowledge_sources AS source
+               SET lifecycle_state = 'deleted', access_lost_at = NULL,
+                   quarantine_expires_at = NULL,
+                   deleted_at = COALESCE(source.deleted_at, now())
+               FROM expired
+               WHERE source.source_id = expired.source_id
+               RETURNING source.source_id, source.source_kind, source.source_identity""",
             (limit,),
+        ).fetchall()
+    for source_id, source_kind, source_identity in rows:
+        append_lifecycle_event(
+            ledger_path,
+            source_id=source_id,
+            source_kind=source_kind,
+            source_identity=source_identity,
+            event_type="deleted",
         )
-        return cursor.rowcount
+    if rows:
+        with psycopg.connect(database_url) as connection:
+            _apply_migrations(connection)
+            connection.cursor().executemany(
+                "DELETE FROM knowledge_sources WHERE source_id = %s",
+                [(row[0],) for row in rows],
+            )
+    return len(rows)
+
+
+def reconcile_source_lifecycle(
+    database_url: str, *, ledger_path: str | Path | None = None
+) -> tuple[int, int, int]:
+    """Apply external deletion/access-loss records before a restored DB serves traffic.
+
+    Returns (deleted, quarantined, missing) counts. Reconciliation is one
+    transaction and deliberately never reactivates a source.
+    """
+    events = read_lifecycle_events(_configured_ledger_path(ledger_path))
+    latest: dict[str, LifecycleEvent] = {}
+    for event in events:
+        latest[event.source_id] = event
+    deleted = quarantined = missing = 0
+    with psycopg.connect(database_url) as connection:
+        _apply_migrations(connection)
+        for source_id, event in latest.items():
+            row = connection.execute(
+                """SELECT source_kind, source_identity, lifecycle_state
+                   FROM knowledge_sources WHERE source_id = %s FOR UPDATE""",
+                (source_id,),
+            ).fetchone()
+            if row is None:
+                missing += 1
+                continue
+            if row[0] != event.source_kind or row[1] != event.source_identity:
+                raise ValueError(
+                    "lifecycle ledger source identity does not match restored database"
+                )
+            if event.event_type == "deleted":
+                deleted += connection.execute(
+                    "DELETE FROM knowledge_sources WHERE source_id = %s", (source_id,)
+                ).rowcount
+            elif row[2] == "active":
+                if row[0] != "github":
+                    raise ValueError("only GitHub sources can be quarantined for access loss")
+                connection.execute(
+                    """UPDATE knowledge_sources
+                       SET lifecycle_state = 'access_lost', access_lost_at = now(),
+                           quarantine_expires_at = now() + (%s * interval '1 day'),
+                           deleted_at = NULL
+                       WHERE source_id = %s""",
+                    (SOURCE_QUARANTINE_DAYS, source_id),
+                )
+                quarantined += 1
+    return deleted, quarantined, missing
 
 
 def fetch_source_chunks(database_url: str, source_id: str) -> list[tuple[Any, ...]]:
@@ -307,3 +423,15 @@ def _validate_source_identity(source_kind: SourceKind, source_identity: str | No
         not isinstance(source_identity, str) or not 1 <= len(source_identity) <= 256
     ):
         raise ValueError("GitHub sources require a bounded immutable identity")
+
+
+def _configured_ledger_path(path: str | Path | None) -> Path:
+    configured = (
+        path if path is not None else os.environ.get("KNOWLEDGE_AGENT_LIFECYCLE_LEDGER_PATH")
+    )
+    if not configured:
+        raise ValueError(
+            "KNOWLEDGE_AGENT_LIFECYCLE_LEDGER_PATH must point to durable storage "
+            "outside PostgreSQL backups"
+        )
+    return Path(configured)

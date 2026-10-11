@@ -206,6 +206,21 @@ def test_cli_purges_expired_sources_without_runtime_configuration(
     assert capsys.readouterr().out == "Purged 2 expired source(s).\n"
 
 
+def test_cli_reconciles_source_lifecycle(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("DATABASE_URL", "postgresql://example")
+    monkeypatch.setenv("KNOWLEDGE_AGENT_LIFECYCLE_LEDGER_PATH", "/var/lib/agent/lifecycle.jsonl")
+    monkeypatch.setattr(cli, "reconcile_source_lifecycle", lambda *args, **kwargs: (2, 1, 3))
+
+    exit_code = cli.main(["reconcile-source-lifecycle"])
+
+    assert exit_code == 0
+    assert capsys.readouterr().out == (
+        "Reconciled source lifecycle: 2 deleted, 1 quarantined, 3 already absent.\n"
+    )
+
+
 def test_cli_bounds_expired_source_purge_batch() -> None:
     with pytest.raises(SystemExit) as exc_info:
         cli.main(["purge-expired-sources", "--limit", "1001"])

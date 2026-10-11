@@ -90,9 +90,12 @@ Planned:
 - [x] Add constrained source lifecycle state, SQL-level retrieval exclusion,
   identity-checked reactivation, bounded quarantine expiry, and an operator
   purge command.
+- [x] Add an append-only external source lifecycle journal and transactional,
+  fail-closed reconciliation for database restores; keep private GitHub source
+  ingestion disabled until operators validate this recovery boundary.
 - [ ] Implement GitHub authentication and bounded Markdown snapshots, then
-  verify refresh/recovery behavior and backup-aware deletion before enabling
-  the connector.
+  verify refresh behavior and recovery with the external lifecycle journal
+  before enabling private-repository ingestion.
 
 ## Out of scope until separately proposed
 

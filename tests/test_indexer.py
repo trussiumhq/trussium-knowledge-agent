@@ -16,6 +16,7 @@ from trussium_knowledge_agent.chunking import Chunk
 from trussium_knowledge_agent.embeddings import EmbeddingsBatch
 from trussium_knowledge_agent.evaluation import EvaluationQuery, ExpectedPassage, evaluate_queries
 from trussium_knowledge_agent.indexer import index_source, remove_index
+from trussium_knowledge_agent.lifecycle_ledger import append_lifecycle_event
 from trussium_knowledge_agent.retrieval import search_index
 from trussium_knowledge_agent.store import (
     SOURCE_QUARANTINE_DAYS,
@@ -24,12 +25,18 @@ from trussium_knowledge_agent.store import (
     persist_source,
     purge_expired_sources,
     reactivate_source,
+    reconcile_source_lifecycle,
     remove_source,
     search_chunks,
 )
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 pytestmark = pytest.mark.skipif(not DATABASE_URL, reason="DATABASE_URL is not configured")
+
+
+@pytest.fixture(autouse=True)
+def lifecycle_ledger_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("KNOWLEDGE_AGENT_LIFECYCLE_LEDGER_PATH", str(tmp_path / "lifecycle.jsonl"))
 
 
 class FakeEmbeddingsClient:
@@ -440,3 +447,161 @@ def test_database_rejects_quarantine_beyond_thirty_days() -> None:
             )
     finally:
         remove_source(DATABASE_URL or "", source_id)
+
+
+def test_restore_reconciliation_removes_deleted_hides_revoked_and_preserves_unrelated(
+    tmp_path: Path,
+) -> None:
+    deleted_id, deleted_identity, deleted_chunk = _github_fixture_source()
+    revoked_id, revoked_identity, revoked_chunk = _github_fixture_source()
+    active_id = hashlib.sha256(uuid4().hex.encode("utf-8")).hexdigest()
+    persist_source(
+        DATABASE_URL or "",
+        source_id=deleted_id,
+        display_name="deleted-repo",
+        revision="a" * 40,
+        chunks=[deleted_chunk],
+        source_kind="github",
+        source_identity=deleted_identity,
+    )
+    persist_source(
+        DATABASE_URL or "",
+        source_id=revoked_id,
+        display_name="revoked-repo",
+        revision="b" * 40,
+        chunks=[revoked_chunk],
+        source_kind="github",
+        source_identity=revoked_identity,
+    )
+    persist_source(
+        DATABASE_URL or "",
+        source_id=active_id,
+        display_name="unrelated-local",
+        revision=None,
+        chunks=[],
+    )
+    ledger_path = tmp_path / "restore-ledger.jsonl"
+    append_lifecycle_event(
+        ledger_path,
+        source_id=deleted_id,
+        source_kind="github",
+        source_identity=deleted_identity,
+        event_type="deleted",
+    )
+    append_lifecycle_event(
+        ledger_path,
+        source_id=revoked_id,
+        source_kind="github",
+        source_identity=revoked_identity,
+        event_type="access_lost",
+    )
+
+    # Simulate restoring an older backup with both sources active.
+    with psycopg.connect(DATABASE_URL or "") as connection:
+        connection.execute(
+            """UPDATE knowledge_sources SET lifecycle_state = 'active', access_lost_at = NULL,
+                       quarantine_expires_at = NULL, deleted_at = NULL
+               WHERE source_id IN (%s, %s)""",
+            (deleted_id, revoked_id),
+        )
+
+    assert reconcile_source_lifecycle(DATABASE_URL or "", ledger_path=ledger_path) == (1, 1, 0)
+    assert fetch_source_chunks(DATABASE_URL or "", deleted_id) == []
+    assert len(fetch_source_chunks(DATABASE_URL or "", revoked_id)) == 1
+    assert fetch_source_chunks(DATABASE_URL or "", active_id) == []
+    with psycopg.connect(DATABASE_URL or "") as connection:
+        states = connection.execute(
+            "SELECT source_id, lifecycle_state FROM knowledge_sources WHERE source_id IN (%s, %s)",
+            (revoked_id, active_id),
+        ).fetchall()
+    assert dict(states) == {revoked_id: "access_lost", active_id: "active"}
+    assert reconcile_source_lifecycle(DATABASE_URL or "", ledger_path=ledger_path) == (0, 0, 1)
+    remove_source(DATABASE_URL or "", revoked_id)
+    remove_source(DATABASE_URL or "", active_id)
+
+
+def test_removal_journal_failure_keeps_source_hidden(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_id, identity, chunk = _github_fixture_source()
+    persist_source(
+        DATABASE_URL or "",
+        source_id=source_id,
+        display_name="manuals",
+        revision="a" * 40,
+        chunks=[chunk],
+        source_kind="github",
+        source_identity=identity,
+    )
+    with monkeypatch.context() as patcher:
+        patcher.setattr(
+            "trussium_knowledge_agent.store.append_lifecycle_event",
+            lambda *args, **kwargs: (_ for _ in ()).throw(OSError("journal unavailable")),
+        )
+        with pytest.raises(OSError, match="journal unavailable"):
+            remove_source(DATABASE_URL or "", source_id)
+
+    with psycopg.connect(DATABASE_URL or "") as connection:
+        lifecycle = connection.execute(
+            "SELECT lifecycle_state FROM knowledge_sources WHERE source_id = %s", (source_id,)
+        ).fetchone()
+    assert lifecycle == ("deleted",)
+    results = search_chunks(
+        DATABASE_URL or "",
+        query_vector=(1.0, 0.0),
+        provider="test-provider",
+        model="test-model",
+    )
+    assert not any(result.display_name == "manuals" for result in results)
+    assert remove_source(DATABASE_URL or "", source_id)
+
+
+def test_restore_reconciliation_identity_mismatch_rolls_back_all_changes(
+    tmp_path: Path,
+) -> None:
+    first_id, first_identity, first_chunk = _github_fixture_source()
+    second_id, second_identity, second_chunk = _github_fixture_source()
+    persist_source(
+        DATABASE_URL or "",
+        source_id=first_id,
+        display_name="first-repo",
+        revision="a" * 40,
+        chunks=[first_chunk],
+        source_kind="github",
+        source_identity=first_identity,
+    )
+    persist_source(
+        DATABASE_URL or "",
+        source_id=second_id,
+        display_name="second-repo",
+        revision="b" * 40,
+        chunks=[second_chunk],
+        source_kind="github",
+        source_identity=second_identity,
+    )
+    ledger_path = tmp_path / "mismatched-identity.jsonl"
+    append_lifecycle_event(
+        ledger_path,
+        source_id=first_id,
+        source_kind="github",
+        source_identity=first_identity,
+        event_type="access_lost",
+    )
+    append_lifecycle_event(
+        ledger_path,
+        source_id=second_id,
+        source_kind="github",
+        source_identity="github.com:repository:unexpected",
+        event_type="access_lost",
+    )
+
+    with pytest.raises(ValueError, match="identity does not match"):
+        reconcile_source_lifecycle(DATABASE_URL or "", ledger_path=ledger_path)
+    with psycopg.connect(DATABASE_URL or "") as connection:
+        states = connection.execute(
+            "SELECT source_id, lifecycle_state FROM knowledge_sources WHERE source_id IN (%s, %s)",
+            (first_id, second_id),
+        ).fetchall()
+    assert dict(states) == {first_id: "active", second_id: "active"}
+    remove_source(DATABASE_URL or "", first_id)
+    remove_source(DATABASE_URL or "", second_id)

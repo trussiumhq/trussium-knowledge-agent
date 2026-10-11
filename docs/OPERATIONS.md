@@ -42,6 +42,7 @@ credentials in command arguments, or copy the development password from
 | `TRUSSIUM_API_KEY` | Optional runtime bearer credential. Keep it in a secret manager. |
 | `KNOWLEDGE_AGENT_TOOL_TOKEN` | Optional high-entropy bearer secret. When absent, `/v1/mcp` returns 503; when set, callers must provide the matching token. |
 | `KNOWLEDGE_AGENT_AUDIT_ROOT` | Optional operator-selected local Markdown root for `docs.audit_links`. Callers cannot override this path. |
+| `KNOWLEDGE_AGENT_LIFECYCLE_LEDGER_PATH` | Required for source removal, GitHub access-loss recording, and expiry purge. Points to the append-only lifecycle journal on durable storage outside PostgreSQL backups. |
 
 `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DB` configure only the
 development Compose database. They do not configure the app's DB connection;
@@ -194,7 +195,7 @@ During routine operation:
   content from older retained backups. Apply backup expiration policy to
   deletion requests as well.
 
-## Source access-loss quarantine
+## Source lifecycle and restore reconciliation
 
 The database records source kind, an immutable external identity for a future
 GitHub source, lifecycle state, access-loss time, and a quarantine expiry. A
@@ -206,9 +207,26 @@ the live source and chunks immediately. The current app has these database
 primitives but does not yet connect to GitHub or automatically detect
 authorization changes.
 
+Source removal, confirmed GitHub access loss, and expiry purge require an
+append-only JSON Lines lifecycle journal at
+`KNOWLEDGE_AGENT_LIFECYCLE_LEDGER_PATH`. Provision its parent directory with
+the service account as owner, create the file with mode `0600`, and place it on
+durable storage outside the PostgreSQL backup/restore set. The application
+serializes appends, fsyncs each record, and rejects symlinks, insecure file
+permissions, invalid or incomplete records, and journals larger than 16 MiB.
+The journal contains stable source identifiers and lifecycle metadata only—no
+document text or credentials. Protect it, back it up independently, and test
+its recovery.
+
+If journal recording fails after a source has been hidden in PostgreSQL, the
+operation reports an error and leaves that source non-retrievable. Retry after
+fixing the journal. Repeated events are idempotent. Expiry purge first marks
+expired rows deleted, records the deletion, and only then removes the rows and
+chunks; a failed append leaves rows hidden for a later retry.
+
 Purge expired quarantine rows daily using an external scheduler or operator
-runbook. The command needs only `DATABASE_URL`; it does not call Trussium or
-need an embedding model:
+runbook. The command needs `DATABASE_URL` and the lifecycle journal; it does
+not call Trussium or need an embedding model:
 
 ```bash
 uv run --no-dev trussium-knowledge-agent purge-expired-sources --limit 100
@@ -220,6 +238,36 @@ and verify the database connection before retrying. Purging cascades to the
 source's indexed chunks. This command does not purge old database backups; use
 the backup retention policy and restore procedure when handling deletion
 requests. No background scheduler is built into the application.
+
+### Database restore ordering
+
+Keep a restored database isolated from application traffic until lifecycle
+reconciliation and validation finish. Restore into a separate database or
+service, configure `DATABASE_URL` for that isolated target, and point
+`KNOWLEDGE_AGENT_LIFECYCLE_LEDGER_PATH` to the independently recovered current
+journal—not a copy rolled back to the date of the PostgreSQL backup. Run:
+
+```bash
+uv run --no-dev trussium-knowledge-agent reconcile-source-lifecycle
+```
+
+The command validates the complete journal before applying changes in one
+database transaction. It deletes sources with a durable deletion event,
+quarantines sources with confirmed access loss, and leaves unrelated active
+sources unchanged. It is idempotent and never reactivates, reindexes, or creates
+a source. A malformed journal, source-identity mismatch, or database error
+causes a nonzero exit; do not expose the restored database until the failure is
+resolved and reconciliation succeeds. Review the reported deleted,
+quarantined, and already-absent counts against the expected restore, then run
+the normal liveness, dependency, and known-query smoke tests before cutover.
+
+Reconciliation cannot erase chunks from historical backups or recover a
+journal lost in the same failure domain as PostgreSQL. Keep separate retention
+controls for database dumps and the journal. The initial implementation uses a
+host-local file and `flock`; it is intended for a single app host, not multiple
+replicas sharing a network filesystem. Private GitHub ingestion remains
+disabled until operators configure and successfully rehearse this recovery
+procedure.
 
 ## PostgreSQL backup
 
