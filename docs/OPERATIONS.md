@@ -134,9 +134,55 @@ browser interface directly to the public internet. Avoid debug mode in
 production.
 
 Before serving traffic, index the intended Markdown source explicitly using
-the CLI `index` command. The app only sees that indexed corpus; it does not
-watch source directories or automatically ingest changes. Re-index after
-content changes. Re-indexing replaces one source transactionally.
+the CLI `index` or `index-github` command. The app only sees that indexed
+corpus; it does not watch source directories or automatically ingest changes.
+Re-index after content changes. Re-indexing replaces one source transactionally.
+
+## Explicit public GitHub refresh
+
+The `index-github` command supports public GitHub repositories only. It does
+not accept a repository URL or API host, use credentials, follow redirects,
+fetch issues/pull requests, or run repository code. The operator selects one
+repository and a branch, tag, or commit ref explicitly:
+
+```bash
+uv run --env-file .env trussium-knowledge-agent index-github OWNER/REPOSITORY --ref main
+```
+
+The app uses only `api.github.com` and `raw.githubusercontent.com`. Allow
+outbound HTTPS to those hosts from the app if egress is restricted. Anonymous
+GitHub API limits apply; a rate-limit or network failure leaves the last
+successful index unchanged. Private repository authentication, background
+refresh, webhooks, and GitHub Enterprise hosts are not supported.
+
+Each run resolves the selected ref to a full commit SHA, reads the corresponding
+tree, and downloads only regular Markdown blobs. The snapshot is bounded to a
+4 MiB tree response, 20,000 tree entries, 100 Markdown files, 4 KiB per path,
+5 MiB per file, 20 MiB total Markdown bytes, 10,000 chunks, 10 seconds per
+HTTP request, and a 120-second overall download deadline. Truncated trees,
+invalid UTF-8, unsafe paths/file modes,
+oversized responses, or any incomplete fetch fail before source replacement.
+Symlink blobs and submodule contents are never followed. A successful complete
+snapshot replaces that repository's previous index atomically; if the selected
+ref contains no Markdown files, a successful empty snapshot intentionally
+removes its prior chunks.
+
+The command reports the repository, pinned commit, file/chunk counts, and full
+source ID. Keep the source ID in protected operational notes if you may need to
+remove the source later. Explicit removal is offline and uses the external
+lifecycle journal:
+
+```bash
+uv run --env-file .env trussium-knowledge-agent remove-source SOURCE_ID
+```
+
+The source identity uses GitHub's immutable numeric repository ID, so a
+repository rename does not silently create a second source. Only one active
+snapshot per repository is supported; refreshing a different ref replaces the
+previous snapshot. The database revision and `indexed_at` identify the last
+successful snapshot; failed attempts are returned to the CLI and do not claim
+freshness. See [ADR 0005](adr/0005-github-markdown-source-connector.md) for the
+full connector boundary.
 
 ## Health checks and routine operations
 
@@ -197,15 +243,15 @@ During routine operation:
 
 ## Source lifecycle and restore reconciliation
 
-The database records source kind, an immutable external identity for a future
-GitHub source, lifecycle state, access-loss time, and a quarantine expiry. A
+The database records source kind, an immutable external identity for GitHub
+sources, lifecycle state, access-loss time, and a quarantine expiry. A
 confirmed access loss must move a GitHub source to `access_lost`; the retrieval
 query excludes its chunks immediately while retaining them for up to 30 days.
 Reactivation is allowed only before expiry and when the verified external
 identity exactly matches the stored identity. Explicit source removal deletes
 the live source and chunks immediately. The current app has these database
-primitives but does not yet connect to GitHub or automatically detect
-authorization changes.
+primitives and public GitHub snapshot indexing, but it does not automatically
+detect authorization changes; private repositories are not supported.
 
 Source removal, confirmed GitHub access loss, and expiry purge require an
 append-only JSON Lines lifecycle journal at

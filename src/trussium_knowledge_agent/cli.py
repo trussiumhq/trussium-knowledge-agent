@@ -17,21 +17,32 @@ from trussium_knowledge_agent.guidance_review_evaluation import (
     evaluate_guidance_review_cases,
     load_guidance_review_cases,
 )
-from trussium_knowledge_agent.indexer import index_source, remove_index
+from trussium_knowledge_agent.indexer import index_public_github_source, index_source, remove_index
 from trussium_knowledge_agent.retrieval import search_index
-from trussium_knowledge_agent.store import purge_expired_sources, reconcile_source_lifecycle
+from trussium_knowledge_agent.store import (
+    purge_expired_sources,
+    reconcile_source_lifecycle,
+    remove_source,
+)
 
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="trussium-knowledge-agent",
-        description="Index and search explicitly selected local Markdown repositories.",
+        description="Index and search explicitly selected local or public GitHub Markdown.",
     )
     commands = parser.add_subparsers(dest="command", required=True)
     index = commands.add_parser("index", help="replace the index for a Markdown source")
     index.add_argument("source_root", help="path to the local Markdown repository")
     index.add_argument("--max-chars", type=int, default=1600, help="maximum chunk size")
     index.add_argument("--overlap-chars", type=int, default=200, help="chunk overlap size")
+    index_github = commands.add_parser(
+        "index-github", help="snapshot and index an explicitly selected public GitHub repository"
+    )
+    index_github.add_argument("repository", help="public repository in owner/repository form")
+    index_github.add_argument("--ref", required=True, help="branch, tag, or commit to snapshot")
+    index_github.add_argument("--max-chars", type=int, default=1600, help="maximum chunk size")
+    index_github.add_argument("--overlap-chars", type=int, default=200, help="chunk overlap size")
     search = commands.add_parser("search", help="find semantically similar passages")
     search.add_argument("query", help="question or phrase to search for")
     search.add_argument("--limit", type=_bounded_limit, default=5, help="number of results (1-20)")
@@ -53,6 +64,10 @@ def _parser() -> argparse.ArgumentParser:
     review_evaluate.add_argument("dataset", help="versioned guidance-review JSON dataset")
     remove = commands.add_parser("remove", help="remove one previously indexed source")
     remove.add_argument("source_root", help="path originally used to index the source")
+    remove_by_id = commands.add_parser(
+        "remove-source", help="remove a source by its full source ID"
+    )
+    remove_by_id.add_argument("source_id", help="full SHA-256 source ID printed by index commands")
     purge = commands.add_parser(
         "purge-expired-sources", help="purge sources past their access-loss retention deadline"
     )
@@ -83,6 +98,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         if arguments.command == "remove":
             removed = remove_index(arguments.source_root, database_url)
             print("Removed indexed source." if removed else "No indexed source matched that path.")
+            return 0
+        if arguments.command == "remove-source":
+            if len(arguments.source_id) != 64 or any(
+                character not in "0123456789abcdef" for character in arguments.source_id
+            ):
+                parser.error("source_id must be a full lowercase SHA-256 ID")
+            removed = remove_source(database_url, arguments.source_id)
+            print("Removed indexed source." if removed else "No indexed source matched that ID.")
             return 0
         if arguments.command == "purge-expired-sources":
             purged = purge_expired_sources(database_url, limit=arguments.limit)
@@ -136,6 +159,23 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print(
                     f"Indexed {indexed.file_count} Markdown files into {indexed.chunk_count} "
                     f"chunks (source {indexed.source_id[:12]}, {identity})."
+                )
+                return 0
+
+            if arguments.command == "index-github":
+                indexed = index_public_github_source(
+                    arguments.repository,
+                    arguments.ref,
+                    database_url,
+                    embeddings_client,
+                    model,
+                    max_chars=arguments.max_chars,
+                    overlap_chars=arguments.overlap_chars,
+                )
+                print(
+                    f"Indexed public GitHub repository {indexed.display_name} at "
+                    f"{indexed.revision}: {indexed.file_count} Markdown file(s), "
+                    f"{indexed.chunk_count} chunk(s), source ID {indexed.source_id}."
                 )
                 return 0
 
