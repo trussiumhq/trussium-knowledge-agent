@@ -191,3 +191,23 @@ def test_cli_requires_database_url(monkeypatch: pytest.MonkeyPatch) -> None:
         cli.main(["index", "/tmp/manuals"])
 
     assert exc_info.value.code == 2
+
+
+def test_cli_purges_expired_sources_without_runtime_configuration(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("DATABASE_URL", "postgresql://example")
+    monkeypatch.delenv("TRUSSIUM_EMBEDDING_MODEL", raising=False)
+    monkeypatch.setattr(cli, "purge_expired_sources", lambda _url, *, limit: 2 if limit == 3 else 0)
+
+    exit_code = cli.main(["purge-expired-sources", "--limit", "3"])
+
+    assert exit_code == 0
+    assert capsys.readouterr().out == "Purged 2 expired source(s).\n"
+
+
+def test_cli_bounds_expired_source_purge_batch() -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["purge-expired-sources", "--limit", "1001"])
+
+    assert exc_info.value.code == 2

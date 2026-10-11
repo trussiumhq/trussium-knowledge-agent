@@ -194,6 +194,33 @@ During routine operation:
   content from older retained backups. Apply backup expiration policy to
   deletion requests as well.
 
+## Source access-loss quarantine
+
+The database records source kind, an immutable external identity for a future
+GitHub source, lifecycle state, access-loss time, and a quarantine expiry. A
+confirmed access loss must move a GitHub source to `access_lost`; the retrieval
+query excludes its chunks immediately while retaining them for up to 30 days.
+Reactivation is allowed only before expiry and when the verified external
+identity exactly matches the stored identity. Explicit source removal deletes
+the live source and chunks immediately. The current app has these database
+primitives but does not yet connect to GitHub or automatically detect
+authorization changes.
+
+Purge expired quarantine rows daily using an external scheduler or operator
+runbook. The command needs only `DATABASE_URL`; it does not call Trussium or
+need an embedding model:
+
+```bash
+uv run --no-dev trussium-knowledge-agent purge-expired-sources --limit 100
+```
+
+The default batch is 100 and the maximum is 1,000. Repeat the command until it
+reports zero if a backlog exceeds the selected batch. Alert on command failure
+and verify the database connection before retrying. Purging cascades to the
+source's indexed chunks. This command does not purge old database backups; use
+the backup retention policy and restore procedure when handling deletion
+requests. No background scheduler is built into the application.
+
 ## PostgreSQL backup
 
 `pg_dump` produces a consistent database backup while the database is in use.

@@ -6,7 +6,7 @@ import json
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import psycopg
 
@@ -14,6 +14,9 @@ from trussium_knowledge_agent.chunking import Chunk
 from trussium_knowledge_agent.embeddings import MAX_VECTOR_DIMENSIONS
 
 _MIGRATIONS = Path(__file__).parent / "migrations"
+SourceKind = Literal["local", "github"]
+SOURCE_QUARANTINE_DAYS = 30
+MAX_PURGE_BATCH_SIZE = 1000
 
 
 def _apply_migrations(connection: psycopg.Connection[Any]) -> None:
@@ -40,19 +43,29 @@ def persist_source(
     display_name: str,
     revision: str | None,
     chunks: list[Chunk],
+    source_kind: SourceKind = "local",
+    source_identity: str | None = None,
 ) -> None:
     """Apply schema and atomically replace one source and its chunk records."""
+    _validate_source_identity(source_kind, source_identity)
     with psycopg.connect(database_url) as connection:
         _apply_migrations(connection)
-        connection.execute(
-            """INSERT INTO knowledge_sources (source_id, display_name, revision, indexed_at)
-               VALUES (%s, %s, %s, now())
+        cursor = connection.execute(
+            """INSERT INTO knowledge_sources
+                   (source_id, display_name, revision, indexed_at, source_kind, source_identity)
+               VALUES (%s, %s, %s, now(), %s, %s)
                ON CONFLICT (source_id) DO UPDATE SET
                    display_name = EXCLUDED.display_name,
                    revision = EXCLUDED.revision,
-                   indexed_at = now()""",
-            (source_id, display_name, revision),
+                   indexed_at = now()
+               WHERE knowledge_sources.source_kind = EXCLUDED.source_kind
+                 AND knowledge_sources.source_identity IS NOT DISTINCT FROM
+                     EXCLUDED.source_identity
+                 AND knowledge_sources.lifecycle_state = 'active'""",
+            (source_id, display_name, revision, source_kind, source_identity),
         )
+        if cursor.rowcount != 1:
+            raise ValueError("source identity mismatch or source is not active")
         connection.execute("DELETE FROM document_chunks WHERE source_id = %s", (source_id,))
         if chunks:
             expected_identity: tuple[str, str, int] | None = None
@@ -117,6 +130,73 @@ def remove_source(database_url: str, source_id: str) -> bool:
             "DELETE FROM knowledge_sources WHERE source_id = %s", (source_id,)
         )
         return cursor.rowcount > 0
+
+
+def mark_source_access_lost(
+    database_url: str,
+    source_id: str,
+) -> bool:
+    """Hide a GitHub source from retrieval and start its fixed quarantine once."""
+    with psycopg.connect(database_url) as connection:
+        _apply_migrations(connection)
+        cursor = connection.execute(
+            """UPDATE knowledge_sources
+               SET lifecycle_state = 'access_lost', access_lost_at = now(),
+                   quarantine_expires_at = now() + (%s * interval '1 day')
+               WHERE source_id = %s AND source_kind = 'github'
+                 AND lifecycle_state = 'active'""",
+            (SOURCE_QUARANTINE_DAYS, source_id),
+        )
+        return cursor.rowcount == 1
+
+
+def reactivate_source(
+    database_url: str,
+    source_id: str,
+    *,
+    verified_identity: str,
+) -> bool:
+    """Reactivate only an unexpired GitHub source whose immutable identity matches."""
+    _validate_source_identity("github", verified_identity)
+    with psycopg.connect(database_url) as connection:
+        _apply_migrations(connection)
+        cursor = connection.execute(
+            """UPDATE knowledge_sources
+               SET lifecycle_state = 'active', access_lost_at = NULL,
+                   quarantine_expires_at = NULL
+               WHERE source_id = %s AND source_kind = 'github'
+                 AND source_identity = %s AND lifecycle_state = 'access_lost'
+                 AND quarantine_expires_at > now()""",
+            (source_id, verified_identity),
+        )
+        return cursor.rowcount == 1
+
+
+def purge_expired_sources(
+    database_url: str,
+    *,
+    limit: int = MAX_PURGE_BATCH_SIZE,
+) -> int:
+    """Purge an ordered, bounded batch of sources whose quarantine has expired."""
+    if not 1 <= limit <= MAX_PURGE_BATCH_SIZE:
+        raise ValueError(f"limit must be between 1 and {MAX_PURGE_BATCH_SIZE}")
+    with psycopg.connect(database_url) as connection:
+        _apply_migrations(connection)
+        cursor = connection.execute(
+            """WITH expired AS (
+                   SELECT source_id FROM knowledge_sources
+                   WHERE lifecycle_state = 'access_lost'
+                     AND quarantine_expires_at <= now()
+                   ORDER BY quarantine_expires_at, source_id
+                   LIMIT %s
+                   FOR UPDATE SKIP LOCKED
+               )
+               DELETE FROM knowledge_sources AS source
+               USING expired
+               WHERE source.source_id = expired.source_id""",
+            (limit,),
+        )
+        return cursor.rowcount
 
 
 def fetch_source_chunks(database_url: str, source_id: str) -> list[tuple[Any, ...]]:
@@ -194,6 +274,7 @@ def search_chunks(
                FROM document_chunks AS c
                JOIN knowledge_sources AS s USING (source_id)
                WHERE c.embedding IS NOT NULL
+                 AND s.lifecycle_state = 'active'
                  AND c.embedding_provider = %s
                  AND c.embedding_model = %s
                  AND c.embedding_dimension = %s
@@ -215,3 +296,14 @@ def search_chunks(
             )
             for row in rows
         ]
+
+
+def _validate_source_identity(source_kind: SourceKind, source_identity: str | None) -> None:
+    if source_kind not in ("local", "github"):
+        raise ValueError("source_kind must be local or github")
+    if source_kind == "local" and source_identity is not None:
+        raise ValueError("local sources cannot have an external identity")
+    if source_kind == "github" and (
+        not isinstance(source_identity, str) or not 1 <= len(source_identity) <= 256
+    ):
+        raise ValueError("GitHub sources require a bounded immutable identity")

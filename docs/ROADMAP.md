@@ -87,9 +87,12 @@ Planned:
 - [x] Define the GitHub Markdown connector's least-privilege access, immutable
   revision snapshots, refresh failure behavior, authorization-loss handling,
   and deletion semantics in [ADR 0005](adr/0005-github-markdown-source-connector.md).
-- [ ] Implement the GitHub Markdown connector only after lifecycle state,
-  retrieval filtering, quarantine expiry, backup-aware deletion, bounded
-  snapshot validation, and deterministic failure tests are in place.
+- [x] Add constrained source lifecycle state, SQL-level retrieval exclusion,
+  identity-checked reactivation, bounded quarantine expiry, and an operator
+  purge command.
+- [ ] Implement GitHub authentication and bounded Markdown snapshots, then
+  verify refresh/recovery behavior and backup-aware deletion before enabling
+  the connector.
 
 ## Out of scope until separately proposed
 

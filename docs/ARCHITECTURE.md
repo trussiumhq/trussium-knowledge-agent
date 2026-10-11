@@ -76,6 +76,14 @@ replacement and migration application run in one database transaction. A
 Markdown file larger than 5 MiB or one that is not valid UTF-8 causes indexing
 to fail before database state is changed. `.git` metadata is excluded.
 
+Source rows now record whether a source is local or GitHub-backed and its
+bounded immutable external identity when applicable. A source is either
+`active` or `access_lost`; access-lost chunks remain stored but are excluded by
+the retrieval SQL query. GitHub identity must match before a quarantined source
+can be reactivated. The 30-day quarantine has an explicit bounded purge
+operation. These are lifecycle primitives only: the application does not yet
+connect to GitHub or automatically detect revoked access.
+
 Vectors are stored in pgvector's variable-dimension `vector` type. Each row
 records provider, resolved model, and dimension, and retrieval filters on all
 three before comparing vectors. The initial corpus uses exact cosine search;

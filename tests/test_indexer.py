@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import os
 from collections.abc import Sequence
+from datetime import timedelta
 from pathlib import Path
 from uuid import uuid4
 
@@ -10,11 +12,21 @@ import pytest
 
 from trussium_knowledge_agent.answers import answer_from_passages
 from trussium_knowledge_agent.chat import ChatCompletion
+from trussium_knowledge_agent.chunking import Chunk
 from trussium_knowledge_agent.embeddings import EmbeddingsBatch
 from trussium_knowledge_agent.evaluation import EvaluationQuery, ExpectedPassage, evaluate_queries
 from trussium_knowledge_agent.indexer import index_source, remove_index
 from trussium_knowledge_agent.retrieval import search_index
-from trussium_knowledge_agent.store import fetch_source_chunks
+from trussium_knowledge_agent.store import (
+    SOURCE_QUARANTINE_DAYS,
+    fetch_source_chunks,
+    mark_source_access_lost,
+    persist_source,
+    purge_expired_sources,
+    reactivate_source,
+    remove_source,
+    search_chunks,
+)
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 pytestmark = pytest.mark.skipif(not DATABASE_URL, reason="DATABASE_URL is not configured")
@@ -41,6 +53,26 @@ def _client() -> FakeEmbeddingsClient:
 def _index(path: Path) -> str:
     result = index_source(path, DATABASE_URL or "", _client(), "test-model")
     return result.source_id
+
+
+def _github_fixture_source() -> tuple[str, str, Chunk]:
+    identity = f"github.com:repository:{uuid4().hex}"
+    source_id = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+    content = "The source lifecycle is tested with this passage."
+    digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    chunk = Chunk(
+        chunk_id=digest,
+        relative_path="guide.md",
+        heading_path=("Lifecycle",),
+        heading_anchor="lifecycle",
+        chunk_index=0,
+        content_hash=digest,
+        content=content,
+        embedding=(1.0, 0.0),
+        embedding_provider="test-provider",
+        embedding_model="test-model",
+    )
+    return source_id, identity, chunk
 
 
 def test_index_is_idempotent_and_removes_stale_files(tmp_path: Path) -> None:
@@ -249,3 +281,162 @@ def test_embedding_failure_preserves_previous_index(tmp_path: Path) -> None:
         index_source(tmp_path, DATABASE_URL or "", FailedEmbeddingsClient(), "test-model")
 
     assert fetch_source_chunks(DATABASE_URL or "", source_id) == before
+
+
+def test_existing_local_sources_default_to_active_after_migration() -> None:
+    source_id = hashlib.sha256(uuid4().hex.encode("utf-8")).hexdigest()
+    persist_source(
+        DATABASE_URL or "",
+        source_id=source_id,
+        display_name="local-manuals",
+        revision=None,
+        chunks=[],
+    )
+    try:
+        with psycopg.connect(DATABASE_URL or "") as connection:
+            lifecycle = connection.execute(
+                """SELECT source_kind, source_identity, lifecycle_state,
+                          access_lost_at, quarantine_expires_at
+                   FROM knowledge_sources WHERE source_id = %s""",
+                (source_id,),
+            ).fetchone()
+        assert lifecycle == ("local", None, "active", None, None)
+        assert not mark_source_access_lost(DATABASE_URL or "", source_id)
+    finally:
+        remove_source(DATABASE_URL or "", source_id)
+
+
+def test_github_access_loss_hides_source_and_only_matching_identity_reactivates() -> None:
+    source_id, identity, chunk = _github_fixture_source()
+    persist_source(
+        DATABASE_URL or "",
+        source_id=source_id,
+        display_name="manuals",
+        revision="a" * 40,
+        chunks=[chunk],
+        source_kind="github",
+        source_identity=identity,
+    )
+    try:
+        active_results = search_chunks(
+            DATABASE_URL or "",
+            query_vector=(1.0, 0.0),
+            provider="test-provider",
+            model="test-model",
+        )
+        assert any(result.display_name == "manuals" for result in active_results)
+        assert mark_source_access_lost(DATABASE_URL or "", source_id)
+        assert not mark_source_access_lost(DATABASE_URL or "", source_id)
+        hidden_results = search_chunks(
+            DATABASE_URL or "",
+            query_vector=(1.0, 0.0),
+            provider="test-provider",
+            model="test-model",
+        )
+        assert not any(result.display_name == "manuals" for result in hidden_results)
+        assert len(fetch_source_chunks(DATABASE_URL or "", source_id)) == 1
+        with pytest.raises(ValueError, match="not active"):
+            persist_source(
+                DATABASE_URL or "",
+                source_id=source_id,
+                display_name="manuals",
+                revision="b" * 40,
+                chunks=[chunk],
+                source_kind="github",
+                source_identity=identity,
+            )
+        assert not reactivate_source(
+            DATABASE_URL or "",
+            source_id,
+            verified_identity="github.com:repository:other",
+        )
+        assert reactivate_source(
+            DATABASE_URL or "",
+            source_id,
+            verified_identity=identity,
+        )
+        active_results = search_chunks(
+            DATABASE_URL or "",
+            query_vector=(1.0, 0.0),
+            provider="test-provider",
+            model="test-model",
+        )
+        assert any(result.display_name == "manuals" for result in active_results)
+    finally:
+        remove_source(DATABASE_URL or "", source_id)
+
+
+def test_expired_github_quarantine_purges_source_and_chunks() -> None:
+    source_id, identity, chunk = _github_fixture_source()
+    persist_source(
+        DATABASE_URL or "",
+        source_id=source_id,
+        display_name="manuals",
+        revision="a" * 40,
+        chunks=[chunk],
+        source_kind="github",
+        source_identity=identity,
+    )
+    try:
+        assert mark_source_access_lost(DATABASE_URL or "", source_id)
+        with psycopg.connect(DATABASE_URL or "") as connection:
+            lifecycle = connection.execute(
+                """SELECT quarantine_expires_at - access_lost_at
+                   FROM knowledge_sources WHERE source_id = %s""",
+                (source_id,),
+            ).fetchone()
+        assert lifecycle is not None
+        assert lifecycle[0] == timedelta(days=SOURCE_QUARANTINE_DAYS)
+        with psycopg.connect(DATABASE_URL or "", autocommit=True) as connection:
+            connection.execute(
+                """UPDATE knowledge_sources
+                   SET quarantine_expires_at = now() + interval '1 hour'
+                   WHERE source_id = %s""",
+                (source_id,),
+            )
+        assert purge_expired_sources(DATABASE_URL or "") == 0
+        assert len(fetch_source_chunks(DATABASE_URL or "", source_id)) == 1
+        with psycopg.connect(DATABASE_URL or "", autocommit=True) as connection:
+            connection.execute(
+                """UPDATE knowledge_sources
+                   SET quarantine_expires_at = now()
+                   WHERE source_id = %s""",
+                (source_id,),
+            )
+        assert not reactivate_source(
+            DATABASE_URL or "",
+            source_id,
+            verified_identity=identity,
+        )
+        assert purge_expired_sources(DATABASE_URL or "") == 1
+        assert purge_expired_sources(DATABASE_URL or "") == 0
+        assert fetch_source_chunks(DATABASE_URL or "", source_id) == []
+    finally:
+        remove_source(DATABASE_URL or "", source_id)
+
+
+def test_database_rejects_quarantine_beyond_thirty_days() -> None:
+    source_id, identity, _chunk = _github_fixture_source()
+    persist_source(
+        DATABASE_URL or "",
+        source_id=source_id,
+        display_name="manuals",
+        revision=None,
+        chunks=[],
+        source_kind="github",
+        source_identity=identity,
+    )
+    try:
+        assert mark_source_access_lost(DATABASE_URL or "", source_id)
+        with (
+            pytest.raises(psycopg.IntegrityError),
+            psycopg.connect(DATABASE_URL or "") as connection,
+        ):
+            connection.execute(
+                """UPDATE knowledge_sources
+                   SET quarantine_expires_at = access_lost_at + interval '31 days'
+                   WHERE source_id = %s""",
+                (source_id,),
+            )
+    finally:
+        remove_source(DATABASE_URL or "", source_id)
