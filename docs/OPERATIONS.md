@@ -315,6 +315,34 @@ replicas sharing a network filesystem. Private GitHub ingestion remains
 disabled until operators configure and successfully rehearse this recovery
 procedure.
 
+After reconciliation, inspect lifecycle state and confirm that deleted sources
+are absent, access-lost sources remain quarantined, and unrelated sources remain
+active. The search smoke test must return only passages from active sources; do
+not infer retrieval eligibility from row counts alone. Run reconciliation a
+second time to confirm idempotence. A repeated run may report previously
+deleted sources as already absent.
+
+#### Rehearsal record
+
+On 2026-10-15, the restore and lifecycle replay path was exercised locally using
+a disposable PostgreSQL 16.15 cluster with pgvector 0.8.7. Three synthetic
+sources (one to delete, one to quarantine, and one unaffected active source)
+were dumped before lifecycle events were recorded. The archive was restored to
+a new database while the database containing the later lifecycle changes
+remained separate. Before reconciliation, the restored database contained
+three active sources and three chunks. The first reconciliation reported one
+deleted, one quarantined, and zero already absent; afterward, one source was
+active, one was access-lost, and two chunks remained. The retrieval check
+returned only the active source. The second reconciliation reported zero
+deleted, zero quarantined, and one already absent. The journal was outside the
+database cluster, mode `0600`, and the test used no production data.
+
+This validates the application recovery path in a disposable local cluster; it
+does not validate a deployment's backup storage, secrets, ownership model,
+network filesystem, or operational access controls. Keep private repository
+ingestion disabled until the operators of the target deployment have also
+rehearsed with its independently backed-up journal and recovery credentials.
+
 ## PostgreSQL backup
 
 `pg_dump` produces a consistent database backup while the database is in use.
