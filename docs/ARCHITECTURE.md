@@ -62,14 +62,16 @@ runtime.
    source paths and heading anchors without serving arbitrary local files.
 
 Ingestion is repeatable and idempotent for explicitly selected local sources
-and manually refreshed public GitHub repositories. GitHub snapshots use fixed
-GitHub API/raw-content hosts, are pinned to a commit SHA, and are bounded before
-index replacement. Private repositories, scheduled refresh, and webhooks are
-not implemented. Other formats and external connectors require separate
-parser, access-control, and deletion decisions. See
+and manually refreshed GitHub repositories. Snapshots use fixed GitHub API
+hosts, are pinned to a commit SHA, and are bounded before index replacement.
+Private GitHub snapshots are opt-in and require a selected-repository GitHub
+App; a SQL-level authorization lease and signed security webhooks restrict
+retrieval after access changes. The webhook never triggers content refresh.
+Public snapshots remain tokenless. Other formats and external connectors
+require separate parser, access-control, and deletion decisions. See
 [`ADR 0005`](adr/0005-github-markdown-source-connector.md) for the public
 connector contract and [`ADR 0007`](adr/0007-private-github-app-access-boundary.md)
-for the design-only private access boundary.
+for the private access boundary.
 
 Local source IDs are SHA-256 hashes of the canonical source path, not stored
 absolute paths. GitHub source IDs are hashes of the host and immutable numeric
@@ -83,14 +85,18 @@ to fail before database state is changed. `.git` metadata is excluded.
 Source rows now record whether a source is local or GitHub-backed and its
 bounded immutable external identity when applicable. A source is either
 `active` or `access_lost`; access-lost chunks remain stored but are excluded by
-the retrieval SQL query. GitHub identity must match before a quarantined source
-can be reactivated. The 30-day quarantine has an explicit bounded purge
-operation. The application does not authenticate to GitHub or automatically
-detect revoked access. Deletion and confirmed access loss are also recorded in
-a restrictive, append-only JSON Lines journal outside PostgreSQL backups. A
-recovered database must be reconciled against that journal before application
-traffic is enabled; reconciliation can delete or quarantine sources but never
-reactivates them. See [`ADR 0006`](adr/0006-restore-safe-source-lifecycle.md).
+the retrieval SQL query. Private GitHub sources also record their installation
+and an authorization freshness deadline; retrieval excludes a source as soon
+as the lease expires. GitHub App authentication is opt-in and limited to one
+selected repository per token. Security webhooks and scheduled reconciliation
+hide confirmed or unverifiable sources; content refresh remains explicit.
+Reactivation requires a matching identity and a successfully embedded fresh
+snapshot. The 30-day quarantine has an explicit bounded purge operation.
+Deletion and confirmed access loss are recorded in a restrictive,
+append-only JSON Lines journal outside PostgreSQL backups. A recovered database
+must be reconciled against that journal before application traffic is enabled;
+reconciliation can delete or quarantine sources but never reactivates them.
+See [`ADR 0006`](adr/0006-restore-safe-source-lifecycle.md).
 
 Vectors are stored in pgvector's variable-dimension `vector` type. Each row
 records provider, resolved model, and dimension, and retrieval filters on all

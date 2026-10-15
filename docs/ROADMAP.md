@@ -101,11 +101,15 @@ Planned:
   reconciliation, and reauthorization boundary in
   [ADR 0007](adr/0007-private-github-app-access-boundary.md). This is design
   only; private ingestion remains unavailable.
-- [ ] Implement opt-in private GitHub Markdown snapshots only after the
-  operator rollout gates in ADR 0007 are validated, including key management,
-  signed security webhooks, bounded authorization reconciliation, fail-closed
-  authorization freshness, lifecycle handling, and restore recovery. Keep
-  private sources disabled until that implementation is reviewed and verified.
+- [x] Implement opt-in private GitHub Markdown snapshots using a selected-
+  repository App token, API-only blob reads, signed security webhooks,
+  authorization leases, SQL-level lease expiry, lifecycle journaling, and
+  fresh-snapshot reactivation; keep credentials unconfigured by default.
+- [ ] Rehearse private GitHub access in each target deployment: key handling,
+  HTTPS webhook reachability, scheduled lease reconciliation, authorization
+  loss, and backup/restore recovery. Do not enable private sources until the
+  operator has verified the deployment boundary in
+  [ADR 0007](adr/0007-private-github-app-access-boundary.md).
 
 ## Out of scope until separately proposed
 

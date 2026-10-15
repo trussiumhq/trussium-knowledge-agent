@@ -9,6 +9,7 @@ from trussium_knowledge_agent import cli
 from trussium_knowledge_agent.answers import AnswerCitation, AnswerResult
 from trussium_knowledge_agent.chat import ChatCompletion
 from trussium_knowledge_agent.evaluation import EvaluationQuery, ExpectedPassage
+from trussium_knowledge_agent.github_app import GitHubAppConfig
 from trussium_knowledge_agent.indexer import IndexResult
 from trussium_knowledge_agent.store import SearchResult
 
@@ -83,6 +84,52 @@ def test_cli_index_github_reports_full_commit_and_source_id(
     assert "public GitHub repository acme/docs" in output
     assert "b" * 40 in output
     assert "a" * 64 in output
+
+
+def test_cli_index_private_github_reports_snapshot(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    monkeypatch.setenv("DATABASE_URL", "postgresql://example")
+    monkeypatch.setenv("TRUSSIUM_EMBEDDING_MODEL", "test-model")
+    config = GitHubAppConfig(1, 2, tmp_path / "private-key.pem")
+    monkeypatch.setattr(GitHubAppConfig, "from_environment", lambda: config)
+    monkeypatch.setattr(cli, "TrussiumEmbeddingsClient", lambda *args, **kwargs: FakeRuntime())
+    monkeypatch.setattr(
+        cli,
+        "index_private_github_source",
+        lambda repository_id, ref, database_url, client, model, app_config, **kwargs: IndexResult(
+            source_id="a" * 64,
+            display_name=f"private/{repository_id}",
+            revision="b" * 40,
+            file_count=2,
+            chunk_count=3,
+        ),
+    )
+
+    exit_code = cli.main(["index-github-private", "4242", "--ref", "main"])
+
+    assert exit_code == 0
+    assert "Indexed private GitHub repository private/4242" in capsys.readouterr().out
+
+
+def test_cli_private_github_reconcile_reports_expired_or_failed_sources(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    monkeypatch.setenv("DATABASE_URL", "postgresql://example")
+    config = GitHubAppConfig(1, 2, tmp_path / "private-key.pem")
+    monkeypatch.setattr(GitHubAppConfig, "from_environment", lambda: config)
+    monkeypatch.setattr(
+        cli,
+        "reconcile_private_github_authorization",
+        lambda _database_url, _config: (3, 1, 2),
+    )
+
+    exit_code = cli.main(["reconcile-private-github"])
+
+    assert exit_code == 1
+    assert capsys.readouterr().out == (
+        "Private GitHub authorization: 3 verified, 1 revoked, 2 temporarily unavailable.\n"
+    )
 
 
 def test_cli_remove_source_accepts_full_source_id(

@@ -70,6 +70,7 @@ def test_search_excludes_the_reviewed_source_using_bound_parameters(
     assert isinstance(query, str)
     assert "NOT (s.display_name = %s AND c.relative_path = %s)" in query
     assert "s.lifecycle_state = 'active'" in query
+    assert "s.authorization_verified_until > now()" in query
     assert observed["parameters"] == (
         "[1.0,0.0]",
         "provider",
@@ -128,4 +129,26 @@ def test_github_sources_require_external_lifecycle_journal(
             chunks=[],
             source_kind="github",
             source_identity="github.com:repository:123",
+        )
+
+
+def test_private_github_source_requires_installation_and_expiring_lease(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        psycopg,
+        "connect",
+        lambda *_: pytest.fail("invalid private source metadata must fail before connecting"),
+    )
+
+    with pytest.raises(ValueError, match="installation ID and authorization lease"):
+        store.persist_source(
+            "not-used",
+            source_id="a" * 64,
+            display_name="private-docs",
+            revision="b" * 40,
+            chunks=[],
+            source_kind="github",
+            source_identity="github.com:repository:123",
+            github_installation_id=456,
         )

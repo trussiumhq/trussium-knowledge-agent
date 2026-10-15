@@ -43,6 +43,11 @@ credentials in command arguments, or copy the development password from
 | `KNOWLEDGE_AGENT_TOOL_TOKEN` | Optional high-entropy bearer secret. When absent, `/v1/mcp` returns 503; when set, callers must provide the matching token. |
 | `KNOWLEDGE_AGENT_AUDIT_ROOT` | Optional operator-selected local Markdown root for `docs.audit_links`. Callers cannot override this path. |
 | `KNOWLEDGE_AGENT_LIFECYCLE_LEDGER_PATH` | Required for source removal, GitHub access-loss recording, and expiry purge. Points to the append-only lifecycle journal on durable storage outside PostgreSQL backups. |
+| `KNOWLEDGE_AGENT_GITHUB_APP_ID` | Optional GitHub App numeric ID. Required for private snapshots and authorization reconciliation. |
+| `KNOWLEDGE_AGENT_GITHUB_INSTALLATION_ID` | Optional installed GitHub App installation ID. The connector only acts on this installation. |
+| `KNOWLEDGE_AGENT_GITHUB_PRIVATE_KEY_PATH` | Absolute path to an operator-managed PEM key file, owned by the service account, mode `0600`, and not a symlink. Never store the key in PostgreSQL or the repository. |
+| `KNOWLEDGE_AGENT_GITHUB_AUTHORIZATION_LEASE_SECONDS` | Optional retrieval authorization lease, default 900 seconds and bounded to 60–3600 seconds. Schedule reconciliation more frequently than this value. |
+| `KNOWLEDGE_AGENT_GITHUB_WEBHOOK_SECRET` | Optional high-entropy secret injected from a secret manager; 32 or more UTF-8 bytes. Required to process signed GitHub webhooks. |
 
 `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DB` configure only the
 development Compose database. They do not configure the app's DB connection;
@@ -149,16 +154,11 @@ repository and a branch, tag, or commit ref explicitly:
 uv run --env-file .env trussium-knowledge-agent index-github OWNER/REPOSITORY --ref main
 ```
 
-The app uses only `api.github.com` and `raw.githubusercontent.com`. Allow
-outbound HTTPS to those hosts from the app if egress is restricted. Anonymous
-GitHub API limits apply; a rate-limit or network failure leaves the last
-successful index unchanged. Private repository authentication, background
-refresh, security webhooks, and GitHub Enterprise hosts are not supported.
-Least-privilege private GitHub App access is a documented future design only;
-no credentials, private indexing command, or webhook endpoint are currently
-available. See [ADR 0007](adr/0007-private-github-app-access-boundary.md) for
-the security requirements and [the roadmap](ROADMAP.md) for implementation
-gates.
+The public `index-github` command is tokenless and uses `api.github.com` and
+`raw.githubusercontent.com`. Allow outbound HTTPS to those hosts if egress is
+restricted. Anonymous GitHub API limits apply; a rate-limit or network failure
+leaves the last successful index unchanged. For private sources, use only the
+separate opt-in GitHub App flow below; GitHub Enterprise hosts are unsupported.
 
 Each run resolves the selected ref to a full commit SHA, reads the corresponding
 tree, and downloads only regular Markdown blobs. The snapshot is bounded to a
@@ -188,6 +188,89 @@ previous snapshot. The database revision and `indexed_at` identify the last
 successful snapshot; failed attempts are returned to the CLI and do not claim
 freshness. See [ADR 0005](adr/0005-github-markdown-source-connector.md) for the
 full connector boundary.
+
+## Opt-in private GitHub snapshots
+
+Private indexing is a separate, explicitly configured path. It is not enabled
+by default. The GitHub App and installation credentials remain on the
+self-hosted Knowledge Agent; Trussium runtime credentials are not used for
+GitHub access.
+
+Before configuring it:
+
+1. Create a GitHub App and grant repository `Contents: read` only (GitHub
+   supplies the required metadata access for repository API calls). Do not
+   grant write, administration, Actions, issue, pull-request, or organization
+   permissions. Subscribe to the `installation` and
+   `installation_repositories` webhook events.
+2. Install the app with **only the repositories selected** for indexing. Keep
+   the installation ID and numeric repository IDs in protected operator
+   configuration. A token is minted for exactly one repository ID per
+   operation; never configure or request an installation-wide token.
+3. Store the downloaded App private key in a protected secret store or file
+   readable only by the service account. Set the absolute key path and the App
+   and installation IDs in the service environment. Do not paste the key or
+   installation token into command arguments, logs, or source metadata.
+4. Configure `KNOWLEDGE_AGENT_LIFECYCLE_LEDGER_PATH` on durable storage
+   outside PostgreSQL backups. Private authorization loss requires this
+   journal; the operation keeps a source hidden if journal recording fails.
+5. Expose `POST /webhooks/github` through HTTPS. Inject a random webhook secret
+   of at least 32 bytes through the deployment secret manager. The handler
+   validates GitHub's HMAC-SHA256 signature and delivery ID. Events only hide
+   affected sources; they never trigger content fetching or embeddings.
+6. Select an authorization lease from 60 to 3600 seconds. Schedule the
+   reconciliation command no less frequently than half that lease duration.
+   For the 900-second default, a five-minute schedule is appropriate. If
+   GitHub cannot be reached, the source is excluded from retrieval when its
+   verified lease expires; transient errors are not recorded as confirmed
+   revocations.
+
+Example service environment (provide actual values using your secret manager;
+do not put them in a committed `.env` file):
+
+```text
+KNOWLEDGE_AGENT_GITHUB_APP_ID=123456
+KNOWLEDGE_AGENT_GITHUB_INSTALLATION_ID=789012
+KNOWLEDGE_AGENT_GITHUB_PRIVATE_KEY_PATH=/run/secrets/knowledge-agent-app.pem
+KNOWLEDGE_AGENT_GITHUB_AUTHORIZATION_LEASE_SECONDS=900
+KNOWLEDGE_AGENT_GITHUB_WEBHOOK_SECRET=<secret-manager-injected-value>
+```
+
+Index one repository by its immutable numeric GitHub repository ID and an
+explicit ref. The repository ID is returned by GitHub's repository metadata
+API. No arbitrary URL or host is accepted:
+
+```bash
+uv run --env-file .env trussium-knowledge-agent index-github-private 123456789 --ref main
+```
+
+The app obtains a short-lived installation token scoped to that single ID and
+`Contents: read`, then fetches tree and blob objects only from HTTPS
+`api.github.com`. It never forwards the token to `raw.githubusercontent.com`.
+Each complete snapshot is validated and embedded before an atomic source
+replacement. A quarantined source is not reactivated by simply restoring its
+credentials: a complete fresh snapshot must succeed first.
+
+Schedule authorization reconciliation independently from content refresh. For
+the default 900-second lease, run this command at least every five minutes:
+
+```bash
+uv run --env-file .env trussium-knowledge-agent reconcile-private-github
+```
+
+The command returns a nonzero status when any repository could not be checked;
+transient failures do not extend leases. Alert on failed runs. When the lease
+expires, affected sources disappear from search and answers until successful
+reconciliation or a full fresh index. Webhook delivery is an additional prompt
+for access removal, not a replacement for this scheduled check.
+
+After backup restoration, run the lifecycle journal reconciliation before
+serving traffic. For a repository access-loss event, review its quarantine
+status and re-index only after confirming the same repository is again
+authorized. Use `remove-source SOURCE_ID` to purge an indexed source when it is
+no longer needed; remember that historical database backups follow their own
+retention policy. See [ADR 0007](adr/0007-private-github-app-access-boundary.md)
+for the authorization and recovery contract.
 
 ## Health checks and routine operations
 
@@ -248,15 +331,15 @@ During routine operation:
 
 ## Source lifecycle and restore reconciliation
 
-The database records source kind, an immutable external identity for GitHub
-sources, lifecycle state, access-loss time, and a quarantine expiry. A
-confirmed access loss must move a GitHub source to `access_lost`; the retrieval
-query excludes its chunks immediately while retaining them for up to 30 days.
-Reactivation is allowed only before expiry and when the verified external
-identity exactly matches the stored identity. Explicit source removal deletes
-the live source and chunks immediately. The current app has these database
-primitives and public GitHub snapshot indexing, but it does not automatically
-detect authorization changes; private repositories are not supported.
+The database records source kind, immutable GitHub identity, lifecycle state,
+access-loss time, and a quarantine expiry. Private GitHub sources also record
+the installation ID and verified authorization deadline. A source with a
+confirmed access loss is moved to `access_lost`; the retrieval query excludes
+its chunks immediately while retaining them for up to 30 days. A private
+source with an expired authorization lease is likewise excluded even if a
+webhook was delayed or the API is temporarily unavailable. Private
+reactivation requires the same repository identity and a complete successful
+fresh snapshot. Explicit source removal deletes live chunks immediately.
 
 Source removal, confirmed GitHub access loss, and expiry purge require an
 append-only JSON Lines lifecycle journal at
@@ -345,8 +428,10 @@ database cluster, mode `0600`, and the test used no production data.
 This validates the application recovery path in a disposable local cluster; it
 does not validate a deployment's backup storage, secrets, ownership model,
 network filesystem, or operational access controls. Keep private repository
-ingestion disabled until the operators of the target deployment have also
-rehearsed with its independently backed-up journal and recovery credentials.
+configuration unset until target operators have rehearsed selected-repository
+permissions, HTTPS webhook delivery, scheduled authorization reconciliation,
+loss-of-access behavior, and restore recovery with the independently backed-up
+journal and recovery credentials.
 
 ## PostgreSQL backup
 
