@@ -4,6 +4,8 @@
 
 Accepted. The explicit public-repository snapshot slice is implemented;
 private-repository authentication and automatic synchronization are deferred.
+The future private GitHub App security boundary is defined in
+[ADR 0007](0007-private-github-app-access-boundary.md); it is not implemented.
 
 ## Context
 
@@ -161,3 +163,4 @@ needed by its chosen endpoints.
   selection](https://docs.github.com/en/apps/using-github-apps/installing-your-own-github-app)
 - [Permissions required for GitHub
   Apps](https://docs.github.com/en/rest/authentication/permissions-required-for-github-apps)
+- [Private GitHub App access boundary](0007-private-github-app-access-boundary.md)

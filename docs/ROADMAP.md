@@ -97,9 +97,15 @@ Planned:
 - [x] Implement explicit, bounded public GitHub Markdown snapshots pinned to
   commit SHAs; verify failed refresh preservation, database replacement, and
   lifecycle-aware removal.
-- [ ] Design and implement least-privilege private GitHub authentication only
-  after the external lifecycle journal and restore procedure have been
-  rehearsed; keep private sources disabled until then.
+- [x] Define the least-privilege private GitHub App access, revocation,
+  reconciliation, and reauthorization boundary in
+  [ADR 0007](adr/0007-private-github-app-access-boundary.md). This is design
+  only; private ingestion remains unavailable.
+- [ ] Implement opt-in private GitHub Markdown snapshots only after the
+  operator rollout gates in ADR 0007 are validated, including key management,
+  signed security webhooks, bounded authorization reconciliation, fail-closed
+  authorization freshness, lifecycle handling, and restore recovery. Keep
+  private sources disabled until that implementation is reviewed and verified.
 
 ## Out of scope until separately proposed
 
