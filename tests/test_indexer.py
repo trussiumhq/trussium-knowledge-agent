@@ -661,9 +661,11 @@ def test_restore_reconciliation_removes_deleted_hides_revoked_and_preserves_unre
         connection.execute(
             """UPDATE knowledge_sources SET lifecycle_state = 'active', access_lost_at = NULL,
                        quarantine_expires_at = NULL, deleted_at = NULL,
-                       authorization_verified_until = now() + interval '10 minutes'
+                       authorization_verified_until = CASE
+                           WHEN source_id = %s THEN now() + interval '10 minutes'
+                           ELSE NULL END
                WHERE source_id IN (%s, %s)""",
-            (deleted_id, revoked_id),
+            (revoked_id, deleted_id, revoked_id),
         )
 
     assert reconcile_source_lifecycle(DATABASE_URL or "", ledger_path=ledger_path) == (1, 1, 0)
