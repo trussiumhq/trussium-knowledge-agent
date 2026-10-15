@@ -23,7 +23,9 @@ Markdown link audit; it does not autonomously edit repositories. See the
 - PostgreSQL with pgvector for document chunks, source metadata, and vectors.
 - Explicitly selected local Markdown repositories and bounded, manually
   refreshed public GitHub Markdown snapshots pinned to a full commit SHA.
-- No private-repository authentication, automatic refresh, or webhook sync.
+- Public GitHub indexing only: private authentication, automatic refresh, and
+  webhook handling are not implemented. The future private-access boundary is
+  design-only in [ADR 0007](docs/adr/0007-private-github-app-access-boundary.md).
 - An opt-in Trussium runtime with explicitly registered tools for bounded
   documentation search and deterministic audits. External issue or pull
   request creation is not implemented.

@@ -153,7 +153,12 @@ The app uses only `api.github.com` and `raw.githubusercontent.com`. Allow
 outbound HTTPS to those hosts from the app if egress is restricted. Anonymous
 GitHub API limits apply; a rate-limit or network failure leaves the last
 successful index unchanged. Private repository authentication, background
-refresh, webhooks, and GitHub Enterprise hosts are not supported.
+refresh, security webhooks, and GitHub Enterprise hosts are not supported.
+Least-privilege private GitHub App access is a documented future design only;
+no credentials, private indexing command, or webhook endpoint are currently
+available. See [ADR 0007](adr/0007-private-github-app-access-boundary.md) for
+the security requirements and [the roadmap](ROADMAP.md) for implementation
+gates.
 
 Each run resolves the selected ref to a full commit SHA, reads the corresponding
 tree, and downloads only regular Markdown blobs. The snapshot is bounded to a

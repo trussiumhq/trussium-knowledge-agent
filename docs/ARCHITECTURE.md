@@ -67,7 +67,9 @@ GitHub API/raw-content hosts, are pinned to a commit SHA, and are bounded before
 index replacement. Private repositories, scheduled refresh, and webhooks are
 not implemented. Other formats and external connectors require separate
 parser, access-control, and deletion decisions. See
-[`ADR 0005`](adr/0005-github-markdown-source-connector.md).
+[`ADR 0005`](adr/0005-github-markdown-source-connector.md) for the public
+connector contract and [`ADR 0007`](adr/0007-private-github-app-access-boundary.md)
+for the design-only private access boundary.
 
 Local source IDs are SHA-256 hashes of the canonical source path, not stored
 absolute paths. GitHub source IDs are hashes of the host and immutable numeric
