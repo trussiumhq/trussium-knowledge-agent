@@ -91,8 +91,9 @@ Planned:
   identity-checked reactivation, bounded quarantine expiry, and an operator
   purge command.
 - [x] Add an append-only external source lifecycle journal and transactional,
-  fail-closed reconciliation for database restores; keep private GitHub source
-  ingestion disabled until operators validate this recovery boundary.
+  fail-closed reconciliation for database restores; validate it in a
+  disposable PostgreSQL restore rehearsal. Private GitHub source ingestion
+  remains disabled until target operators validate their deployment boundary.
 - [x] Implement explicit, bounded public GitHub Markdown snapshots pinned to
   commit SHAs; verify failed refresh preservation, database replacement, and
   lifecycle-aware removal.
