@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import os
 from collections.abc import Sequence
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
@@ -18,10 +18,13 @@ from trussium_knowledge_agent.evaluation import EvaluationQuery, ExpectedPassage
 from trussium_knowledge_agent.github_snapshot import GitHubSnapshot, GitHubSnapshotError
 from trussium_knowledge_agent.indexer import index_public_github_source, index_source, remove_index
 from trussium_knowledge_agent.lifecycle_ledger import append_lifecycle_event
+from trussium_knowledge_agent.private_github import process_github_webhook
 from trussium_knowledge_agent.retrieval import search_index
 from trussium_knowledge_agent.store import (
     SOURCE_QUARANTINE_DAYS,
     fetch_source_chunks,
+    github_webhook_delivery_recorded,
+    list_private_github_sources,
     mark_source_access_lost,
     persist_source,
     purge_expired_sources,
@@ -29,6 +32,7 @@ from trussium_knowledge_agent.store import (
     reconcile_source_lifecycle,
     remove_source,
     search_chunks,
+    verify_private_source_authorization,
 )
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
@@ -374,6 +378,157 @@ def test_github_access_loss_hides_source_and_only_matching_identity_reactivates(
         remove_source(DATABASE_URL or "", source_id)
 
 
+def test_private_source_lease_expiry_and_fresh_snapshot_reactivation() -> None:
+    repository_id = 987654321
+    installation_id = 4567
+    identity = f"github.com:repository:{repository_id}"
+    source_id = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+    _, _, original = _github_fixture_source()
+    verified_until = datetime.now(UTC) + timedelta(minutes=5)
+    persist_source(
+        DATABASE_URL or "",
+        source_id=source_id,
+        display_name="private-manuals",
+        revision="a" * 40,
+        chunks=[original],
+        source_kind="github",
+        source_identity=identity,
+        github_installation_id=installation_id,
+        authorization_verified_until=verified_until,
+    )
+    try:
+        assert any(
+            result.display_name == "private-manuals"
+            for result in search_chunks(
+                DATABASE_URL or "",
+                query_vector=(1.0, 0.0),
+                provider="test-provider",
+                model="test-model",
+            )
+        )
+        with psycopg.connect(DATABASE_URL or "") as connection:
+            connection.execute(
+                """UPDATE knowledge_sources SET authorization_verified_until = now() - interval '1 second'
+                   WHERE source_id = %s""",
+                (source_id,),
+            )
+        assert not any(
+            result.display_name == "private-manuals"
+            for result in search_chunks(
+                DATABASE_URL or "",
+                query_vector=(1.0, 0.0),
+                provider="test-provider",
+                model="test-model",
+            )
+        )
+        assert verify_private_source_authorization(
+            DATABASE_URL or "",
+            source_id,
+            installation_id,
+            datetime.now(UTC) + timedelta(minutes=5),
+        )
+        assert mark_source_access_lost(DATABASE_URL or "", source_id)
+        assert not reactivate_source(DATABASE_URL or "", source_id, verified_identity=identity)
+        fresh = Chunk(
+            chunk_id="c" * 64,
+            relative_path="guide.md",
+            heading_path=("Lifecycle",),
+            heading_anchor="lifecycle",
+            chunk_index=0,
+            content_hash="d" * 64,
+            content="A complete newly verified private snapshot.",
+            embedding=(1.0, 0.0),
+            embedding_provider="test-provider",
+            embedding_model="test-model",
+        )
+        persist_source(
+            DATABASE_URL or "",
+            source_id=source_id,
+            display_name="private-manuals",
+            revision="b" * 40,
+            chunks=[fresh],
+            source_kind="github",
+            source_identity=identity,
+            github_installation_id=installation_id,
+            authorization_verified_until=datetime.now(UTC) + timedelta(minutes=5),
+        )
+        rows = fetch_source_chunks(DATABASE_URL or "", source_id)
+        assert rows[0][6] == "A complete newly verified private snapshot."
+        assert rows[0][1] == "guide.md"
+        assert any(
+            result.display_name == "private-manuals"
+            for result in search_chunks(
+                DATABASE_URL or "",
+                query_vector=(1.0, 0.0),
+                provider="test-provider",
+                model="test-model",
+            )
+        )
+    finally:
+        remove_source(DATABASE_URL or "", source_id)
+
+
+def test_private_github_webhook_journals_loss_and_deduplicates_delivery() -> None:
+    repository_id = 987654322
+    installation_id = 4567
+    identity = f"github.com:repository:{repository_id}"
+    source_id = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+    _, _, chunk = _github_fixture_source()
+    persist_source(
+        DATABASE_URL or "",
+        source_id=source_id,
+        display_name="private-webhook-docs",
+        revision="a" * 40,
+        chunks=[chunk],
+        source_kind="github",
+        source_identity=identity,
+        github_installation_id=installation_id,
+        authorization_verified_until=datetime.now(UTC) + timedelta(minutes=5),
+    )
+    try:
+        assert list_private_github_sources(DATABASE_URL or "", installation_id) == [
+            (source_id, repository_id, identity)
+        ]
+        payload = {
+            "action": "removed",
+            "installation": {"id": installation_id},
+            "repositories_removed": [{"id": repository_id}],
+        }
+        assert process_github_webhook(
+            DATABASE_URL or "",
+            "integration-delivery-1",
+            "installation_repositories",
+            payload,
+            expected_installation_id=installation_id,
+        )
+        assert not process_github_webhook(
+            DATABASE_URL or "",
+            "integration-delivery-1",
+            "installation_repositories",
+            payload,
+            expected_installation_id=installation_id,
+        )
+        assert github_webhook_delivery_recorded(DATABASE_URL or "", "integration-delivery-1")
+        with psycopg.connect(DATABASE_URL or "") as connection:
+            lifecycle = connection.execute(
+                """SELECT lifecycle_state, authorization_verified_until
+                   FROM knowledge_sources WHERE source_id = %s""",
+                (source_id,),
+            ).fetchone()
+        assert lifecycle == ("access_lost", None)
+        assert not any(
+            result.display_name == "private-webhook-docs"
+            for result in search_chunks(
+                DATABASE_URL or "",
+                query_vector=(1.0, 0.0),
+                provider="test-provider",
+                model="test-model",
+            )
+        )
+    finally:
+        remove_source(DATABASE_URL or "", source_id)
+
+
 def test_expired_github_quarantine_purges_source_and_chunks() -> None:
     source_id, identity, chunk = _github_fixture_source()
     persist_source(
@@ -454,7 +609,9 @@ def test_restore_reconciliation_removes_deleted_hides_revoked_and_preserves_unre
     tmp_path: Path,
 ) -> None:
     deleted_id, deleted_identity, deleted_chunk = _github_fixture_source()
-    revoked_id, revoked_identity, revoked_chunk = _github_fixture_source()
+    _, _, revoked_chunk = _github_fixture_source()
+    revoked_identity = "github.com:repository:987654321"
+    revoked_id = hashlib.sha256(revoked_identity.encode("utf-8")).hexdigest()
     active_id = hashlib.sha256(uuid4().hex.encode("utf-8")).hexdigest()
     persist_source(
         DATABASE_URL or "",
@@ -473,6 +630,8 @@ def test_restore_reconciliation_removes_deleted_hides_revoked_and_preserves_unre
         chunks=[revoked_chunk],
         source_kind="github",
         source_identity=revoked_identity,
+        github_installation_id=4567,
+        authorization_verified_until=datetime.now(UTC) + timedelta(minutes=10),
     )
     persist_source(
         DATABASE_URL or "",
@@ -501,9 +660,12 @@ def test_restore_reconciliation_removes_deleted_hides_revoked_and_preserves_unre
     with psycopg.connect(DATABASE_URL or "") as connection:
         connection.execute(
             """UPDATE knowledge_sources SET lifecycle_state = 'active', access_lost_at = NULL,
-                       quarantine_expires_at = NULL, deleted_at = NULL
+                       quarantine_expires_at = NULL, deleted_at = NULL,
+                       authorization_verified_until = CASE
+                           WHEN source_id = %s THEN now() + interval '10 minutes'
+                           ELSE NULL END
                WHERE source_id IN (%s, %s)""",
-            (deleted_id, revoked_id),
+            (revoked_id, deleted_id, revoked_id),
         )
 
     assert reconcile_source_lifecycle(DATABASE_URL or "", ledger_path=ledger_path) == (1, 1, 0)

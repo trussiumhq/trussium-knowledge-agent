@@ -13,11 +13,18 @@ from trussium_knowledge_agent.answers import answer_from_passages
 from trussium_knowledge_agent.chat import TrussiumChatClient
 from trussium_knowledge_agent.embeddings import TrussiumEmbeddingsClient
 from trussium_knowledge_agent.evaluation import evaluate_queries, load_dataset
+from trussium_knowledge_agent.github_app import GitHubAppConfig
 from trussium_knowledge_agent.guidance_review_evaluation import (
     evaluate_guidance_review_cases,
     load_guidance_review_cases,
 )
-from trussium_knowledge_agent.indexer import index_public_github_source, index_source, remove_index
+from trussium_knowledge_agent.indexer import (
+    index_private_github_source,
+    index_public_github_source,
+    index_source,
+    remove_index,
+)
+from trussium_knowledge_agent.private_github import reconcile_private_github_authorization
 from trussium_knowledge_agent.retrieval import search_index
 from trussium_knowledge_agent.store import (
     purge_expired_sources,
@@ -29,7 +36,7 @@ from trussium_knowledge_agent.store import (
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="trussium-knowledge-agent",
-        description="Index and search explicitly selected local or public GitHub Markdown.",
+        description="Index and search explicitly selected local or GitHub Markdown.",
     )
     commands = parser.add_subparsers(dest="command", required=True)
     index = commands.add_parser("index", help="replace the index for a Markdown source")
@@ -43,6 +50,15 @@ def _parser() -> argparse.ArgumentParser:
     index_github.add_argument("--ref", required=True, help="branch, tag, or commit to snapshot")
     index_github.add_argument("--max-chars", type=int, default=1600, help="maximum chunk size")
     index_github.add_argument("--overlap-chars", type=int, default=200, help="chunk overlap size")
+    index_private = commands.add_parser(
+        "index-github-private", help="snapshot one authorized private GitHub repository"
+    )
+    index_private.add_argument(
+        "repository_id", type=_positive_id, help="immutable numeric GitHub repository ID"
+    )
+    index_private.add_argument("--ref", required=True, help="branch, tag, or commit to snapshot")
+    index_private.add_argument("--max-chars", type=int, default=1600, help="maximum chunk size")
+    index_private.add_argument("--overlap-chars", type=int, default=200, help="chunk overlap size")
     search = commands.add_parser("search", help="find semantically similar passages")
     search.add_argument("query", help="question or phrase to search for")
     search.add_argument("--limit", type=_bounded_limit, default=5, help="number of results (1-20)")
@@ -80,6 +96,10 @@ def _parser() -> argparse.ArgumentParser:
     commands.add_parser(
         "reconcile-source-lifecycle",
         help="apply durable lifecycle restrictions to a restored database",
+    )
+    commands.add_parser(
+        "reconcile-private-github",
+        help="verify authorization leases for configured private GitHub sources",
     )
     return parser
 
@@ -123,6 +143,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"{missing} already absent."
             )
             return 0
+        if arguments.command == "reconcile-private-github":
+            config = GitHubAppConfig.from_environment()
+            verified, revoked, failed = reconcile_private_github_authorization(database_url, config)
+            print(
+                f"Private GitHub authorization: {verified} verified, {revoked} revoked, "
+                f"{failed} temporarily unavailable."
+            )
+            return 1 if failed else 0
 
         model = os.environ.get("TRUSSIUM_EMBEDDING_MODEL", "").strip()
         if not model or model == "replace-with-runtime-embedding-model":
@@ -174,6 +202,25 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
                 print(
                     f"Indexed public GitHub repository {indexed.display_name} at "
+                    f"{indexed.revision}: {indexed.file_count} Markdown file(s), "
+                    f"{indexed.chunk_count} chunk(s), source ID {indexed.source_id}."
+                )
+                return 0
+
+            if arguments.command == "index-github-private":
+                config = GitHubAppConfig.from_environment()
+                indexed = index_private_github_source(
+                    arguments.repository_id,
+                    arguments.ref,
+                    database_url,
+                    embeddings_client,
+                    model,
+                    config,
+                    max_chars=arguments.max_chars,
+                    overlap_chars=arguments.overlap_chars,
+                )
+                print(
+                    f"Indexed private GitHub repository {indexed.display_name} at "
                     f"{indexed.revision}: {indexed.file_count} Markdown file(s), "
                     f"{indexed.chunk_count} chunk(s), source ID {indexed.source_id}."
                 )
@@ -309,6 +356,16 @@ def _bounded_purge_limit(value: str) -> int:
     if not 1 <= limit <= 1000:
         raise argparse.ArgumentTypeError("limit must be between 1 and 1000")
     return limit
+
+
+def _positive_id(value: str) -> int:
+    try:
+        identifier = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("repository ID must be a positive integer") from error
+    if identifier <= 0:
+        raise argparse.ArgumentTypeError("repository ID must be a positive integer")
+    return identifier
 
 
 if __name__ == "__main__":

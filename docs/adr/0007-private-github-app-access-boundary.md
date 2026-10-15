@@ -2,10 +2,11 @@
 
 ## Status
 
-Accepted design; implementation is deferred. Private GitHub ingestion remains
-unavailable. This ADR records security and lifecycle requirements for a
-separately tracked implementation; it does not add credentials, an app, a
-webhook endpoint, or private-repository behavior.
+Accepted. The opt-in private snapshot, authorization lease, and security-only
+webhook implementation is available. It remains disabled unless operators
+provide an explicitly selected GitHub App installation and complete the
+deployment validation in the operations guide. No App or credentials are
+provisioned by this repository.
 
 ## Context
 
@@ -17,10 +18,9 @@ webhook is delayed, or the application is restored from an older database
 backup. A stale private snapshot must not remain searchable after the
 application learns authorization was lost.
 
-The existing source lifecycle and external journal provide restrictive
-`access_lost` and deletion records. They do not implement GitHub App
-authentication, authorization reconciliation, private snapshot fetching, or a
-safe reactivation flow.
+The implementation extends the existing source lifecycle and external journal
+with scoped GitHub App tokens, private blob snapshots, authorization leases,
+reconciliation, and a fresh-snapshot reactivation path.
 
 ## Decision
 
@@ -117,16 +117,15 @@ safe reactivation flow.
 
 ### Availability and rollout gate
 
-- Keep private ingestion disabled until a separate implementation issue is
-  completed and operators validate private-key storage/rotation, selected
-  repository scoping, authenticated host boundaries, signed webhook
-  verification and replay handling, delivery monitoring, bounded
-  reconciliation and an expiring authorization freshness deadline,
-  access-loss exclusion, reauthorization with a fresh snapshot, journal
-  failure behavior, and backup/restore recovery.
-- The current `index-github` command remains public-only and tokenless. No
-  private token flags, environment variables, app setup instructions, or
-  endpoint are available as part of this design change.
+- Keep private configuration empty by default. Before an operator enables it,
+  validate private-key storage/rotation, selected repository scoping,
+  authenticated host boundaries, HTTPS ingress, signed webhook verification
+  and replay handling, delivery monitoring, scheduled lease reconciliation,
+  access-loss exclusion, fresh-snapshot reauthorization, journal failure
+  behavior, and backup/restore recovery.
+- The existing `index-github` command remains public-only and tokenless.
+  `index-github-private` is separate and requires the GitHub App settings
+  documented in `docs/OPERATIONS.md`.
 - Automatic content refresh, push-triggered ingestion, scheduled polling,
   hosted multi-tenant access, and arbitrary GitHub hosts remain out of scope.
 
@@ -146,8 +145,8 @@ safe reactivation flow.
 - Private snapshots remain sensitive data after indexing. Operators remain
   responsible for database encryption, access control, backup retention, and
   purging retained backups according to their policy.
-- The public connector and existing source lifecycle APIs remain unchanged
-  until a separately reviewed implementation is accepted.
+- The public connector remains tokenless and unchanged. Private snapshots use
+  the separate opt-in command and require deployment-specific validation.
 
 ## Alternatives considered
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import json
 import re
@@ -189,6 +191,166 @@ def fetch_public_github_snapshot(
     return GitHubSnapshot(
         repository_id=repository_id,
         repository=f"{canonical_owner}/{canonical_name}",
+        revision=revision,
+        file_count=len(candidates),
+        chunks=tuple(chunks),
+    )
+
+
+def fetch_private_github_snapshot(
+    repository_id: int,
+    ref: str,
+    token: str,
+    *,
+    max_chars: int = 1600,
+    overlap_chars: int = 200,
+    transport: httpx.BaseTransport | None = None,
+) -> GitHubSnapshot:
+    """Fetch a bounded private snapshot without sending its token off api.github.com."""
+    if isinstance(repository_id, bool) or not 0 < repository_id <= 2**63 - 1:
+        raise ValueError("repository ID must be a positive integer")
+    if not token or any(character in token for character in "\r\n"):
+        raise ValueError("GitHub installation token is invalid")
+    if not isinstance(ref, str) or not ref.strip() or len(ref) > 255:
+        raise ValueError("GitHub ref must be a non-empty string of at most 255 characters")
+    if (
+        "\x00" in ref
+        or "\r" in ref
+        or "\n" in ref
+        or "\\" in ref
+        or any(part in ("", ".", "..") for part in ref.split("/"))
+    ):
+        raise ValueError("GitHub ref contains an invalid character")
+    if max_chars < 100 or not 0 <= overlap_chars < max_chars:
+        raise ValueError("chunk sizes are invalid")
+
+    started = time.monotonic()
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "Authorization": f"Bearer {token}",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "trussium-knowledge-agent",
+    }
+    with httpx.Client(
+        transport=transport,
+        timeout=SNAPSHOT_TIMEOUT_SECONDS,
+        follow_redirects=False,
+        headers=headers,
+        trust_env=False,
+    ) as client:
+        base = f"{GITHUB_API}/repositories/{repository_id}"
+        metadata = _get_json(
+            client, base, max_bytes=64 * 1024, deadline=started + SNAPSHOT_DEADLINE_SECONDS
+        )
+        if (
+            isinstance(metadata.get("id"), bool)
+            or metadata.get("id") != repository_id
+            or metadata.get("private") is not True
+        ):
+            raise GitHubSnapshotError("authorized GitHub repository identity did not match")
+        full_name = metadata.get("full_name")
+        if not isinstance(full_name, str):
+            raise GitHubSnapshotError("GitHub returned invalid repository metadata")
+        owner, name = _parse_repository(full_name)
+        repository_path = f"{GITHUB_API}/repos/{quote(owner, safe='')}/{quote(name, safe='')}"
+        commit = _get_json(
+            client,
+            f"{repository_path}/commits/{quote(ref, safe='')}",
+            max_bytes=64 * 1024,
+            deadline=started + SNAPSHOT_DEADLINE_SECONDS,
+        )
+        revision = commit.get("sha")
+        details = commit.get("commit")
+        tree_details = details.get("tree") if isinstance(details, dict) else None
+        tree_sha = tree_details.get("sha") if isinstance(tree_details, dict) else None
+        if not isinstance(revision, str) or not _SHA.fullmatch(revision):
+            raise GitHubSnapshotError("GitHub returned an invalid commit SHA")
+        if not isinstance(tree_sha, str) or not _SHA.fullmatch(tree_sha):
+            raise GitHubSnapshotError("GitHub returned an invalid tree SHA")
+        revision = revision.lower()
+        tree = _get_json(
+            client,
+            f"{repository_path}/git/trees/{tree_sha.lower()}?recursive=1",
+            max_bytes=MAX_TREE_RESPONSE_BYTES,
+            deadline=started + SNAPSHOT_DEADLINE_SECONDS,
+        )
+        entries = tree.get("tree")
+        if tree.get("truncated") is not False or not isinstance(entries, list):
+            raise GitHubSnapshotError("GitHub returned an incomplete repository tree")
+        if len(entries) > MAX_TREE_ENTRIES:
+            raise GitHubSnapshotError("GitHub repository tree exceeds the entry limit")
+
+        candidates: list[tuple[str, str]] = []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                raise GitHubSnapshotError("GitHub returned an invalid repository tree entry")
+            path = entry.get("path")
+            if not isinstance(path, str):
+                raise GitHubSnapshotError("GitHub returned an invalid repository tree path")
+            if not path.lower().endswith(".md"):
+                continue
+            _validate_markdown_path(path)
+            if entry.get("type") == "commit" or entry.get("mode") == "160000":
+                continue
+            if entry.get("type") != "blob" or entry.get("mode") not in ("100644", "100755"):
+                raise GitHubSnapshotError("GitHub Markdown tree entry uses an unsafe file mode")
+            blob_sha = entry.get("sha")
+            if not isinstance(blob_sha, str) or not _SHA.fullmatch(blob_sha):
+                raise GitHubSnapshotError("GitHub Markdown tree entry has an invalid blob SHA")
+            candidates.append((path, blob_sha.lower()))
+        if len(candidates) > MAX_MARKDOWN_FILES:
+            raise GitHubSnapshotError("repository contains more Markdown files than the limit")
+
+        chunks: list[Chunk] = []
+        total_bytes = 0
+        for path, expected_sha in sorted(candidates):
+            blob = _get_json(
+                client,
+                f"{repository_path}/git/blobs/{expected_sha}",
+                max_bytes=((MAX_MARKDOWN_BYTES + 2) // 3) * 4 + 4096,
+                deadline=started + SNAPSHOT_DEADLINE_SECONDS,
+            )
+            if blob.get("sha") != expected_sha or blob.get("encoding") != "base64":
+                raise GitHubSnapshotError("GitHub returned an invalid Markdown blob")
+            declared_size = blob.get("size")
+            encoded_content = blob.get("content")
+            if (
+                isinstance(declared_size, bool)
+                or not isinstance(declared_size, int)
+                or not 0 <= declared_size <= MAX_MARKDOWN_BYTES
+                or not isinstance(encoded_content, str)
+            ):
+                raise GitHubSnapshotError("GitHub Markdown blob exceeds its byte limit")
+            try:
+                raw = base64.b64decode("".join(encoded_content.split()), validate=True)
+            except (ValueError, binascii.Error) as error:
+                raise GitHubSnapshotError("GitHub returned invalid base64 Markdown") from error
+            if len(raw) != declared_size:
+                raise GitHubSnapshotError("GitHub Markdown blob size did not match its metadata")
+            git_sha = hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
+            if git_sha != expected_sha:
+                raise GitHubSnapshotError("GitHub Markdown blob did not match its tree identity")
+            total_bytes += len(raw)
+            if total_bytes > MAX_SNAPSHOT_BYTES:
+                raise GitHubSnapshotError("GitHub Markdown snapshot exceeds the total byte limit")
+            try:
+                content = raw.decode("utf-8-sig")
+            except UnicodeDecodeError as error:
+                raise GitHubSnapshotError("GitHub Markdown file is not valid UTF-8") from error
+            chunks.extend(
+                parse_markdown(
+                    relative_path=path,
+                    source=content,
+                    content_hash=hashlib.sha256(raw).hexdigest(),
+                    max_chars=max_chars,
+                    overlap_chars=overlap_chars,
+                )
+            )
+            if len(chunks) > MAX_SNAPSHOT_CHUNKS:
+                raise GitHubSnapshotError("GitHub Markdown snapshot exceeds the chunk limit")
+    return GitHubSnapshot(
+        repository_id=repository_id,
+        repository=f"{owner}/{name}",
         revision=revision,
         file_count=len(candidates),
         chunks=tuple(chunks),

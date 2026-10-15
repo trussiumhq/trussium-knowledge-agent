@@ -6,6 +6,7 @@ import json
 import math
 import os
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -51,26 +52,58 @@ def persist_source(
     chunks: list[Chunk],
     source_kind: SourceKind = "local",
     source_identity: str | None = None,
+    github_installation_id: int | None = None,
+    authorization_verified_until: datetime | None = None,
 ) -> None:
     """Apply schema and atomically replace one source and its chunk records."""
     _validate_source_identity(source_kind, source_identity)
+    if github_installation_id is not None and (
+        source_kind != "github"
+        or isinstance(github_installation_id, bool)
+        or github_installation_id <= 0
+        or authorization_verified_until is None
+        or authorization_verified_until.tzinfo is None
+    ):
+        raise ValueError(
+            "private GitHub sources require an installation ID and authorization lease"
+        )
+    if github_installation_id is None and authorization_verified_until is not None:
+        raise ValueError("authorization leases are only valid for private GitHub sources")
     if source_kind == "github":
         _configured_ledger_path(None)
     with psycopg.connect(database_url) as connection:
         _apply_migrations(connection)
         cursor = connection.execute(
             """INSERT INTO knowledge_sources
-                   (source_id, display_name, revision, indexed_at, source_kind, source_identity)
-               VALUES (%s, %s, %s, now(), %s, %s)
+                   (source_id, display_name, revision, indexed_at, source_kind, source_identity,
+                    github_installation_id, authorization_verified_until)
+               VALUES (%s, %s, %s, now(), %s, %s, %s, %s)
                ON CONFLICT (source_id) DO UPDATE SET
                    display_name = EXCLUDED.display_name,
                    revision = EXCLUDED.revision,
-                   indexed_at = now()
+                   indexed_at = now(),
+                   github_installation_id = EXCLUDED.github_installation_id,
+                   authorization_verified_until = EXCLUDED.authorization_verified_until,
+                   lifecycle_state = 'active', access_lost_at = NULL,
+                   quarantine_expires_at = NULL, deleted_at = NULL
                WHERE knowledge_sources.source_kind = EXCLUDED.source_kind
                  AND knowledge_sources.source_identity IS NOT DISTINCT FROM
                      EXCLUDED.source_identity
-                 AND knowledge_sources.lifecycle_state = 'active'""",
-            (source_id, display_name, revision, source_kind, source_identity),
+                 AND knowledge_sources.github_installation_id IS NOT DISTINCT FROM
+                     EXCLUDED.github_installation_id
+                 AND (knowledge_sources.lifecycle_state = 'active'
+                      OR (knowledge_sources.lifecycle_state = 'access_lost'
+                          AND EXCLUDED.github_installation_id IS NOT NULL
+                          AND knowledge_sources.quarantine_expires_at > now()))""",
+            (
+                source_id,
+                display_name,
+                revision,
+                source_kind,
+                source_identity,
+                github_installation_id,
+                authorization_verified_until,
+            ),
         )
         if cursor.rowcount != 1:
             raise ValueError("source identity mismatch or source is not active")
@@ -175,7 +208,8 @@ def mark_source_access_lost(
         cursor = connection.execute(
             """UPDATE knowledge_sources
                SET lifecycle_state = 'access_lost', access_lost_at = now(),
-                   quarantine_expires_at = now() + (%s * interval '1 day')
+                   quarantine_expires_at = now() + (%s * interval '1 day'),
+                   authorization_verified_until = NULL
                WHERE source_id = %s AND source_kind = 'github'
                  AND lifecycle_state = 'active'""",
             (SOURCE_QUARANTINE_DAYS, source_id),
@@ -215,6 +249,7 @@ def reactivate_source(
                    quarantine_expires_at = NULL
                WHERE source_id = %s AND source_kind = 'github'
                  AND source_identity = %s AND lifecycle_state = 'access_lost'
+                 AND github_installation_id IS NULL
                  AND quarantine_expires_at > now()""",
             (source_id, verified_identity),
         )
@@ -268,6 +303,85 @@ def purge_expired_sources(
     return len(rows)
 
 
+def list_private_github_sources(
+    database_url: str, installation_id: int
+) -> list[tuple[str, int, str]]:
+    """List source ID, immutable repository ID, and identity for one installation."""
+    if isinstance(installation_id, bool) or installation_id <= 0:
+        raise ValueError("installation ID must be a positive integer")
+    with psycopg.connect(database_url) as connection:
+        _apply_migrations(connection)
+        rows = connection.execute(
+            """SELECT source_id, source_identity
+               FROM knowledge_sources
+               WHERE source_kind = 'github' AND github_installation_id = %s
+                 AND lifecycle_state IN ('active', 'access_lost')
+               ORDER BY source_id""",
+            (installation_id,),
+        ).fetchall()
+    results: list[tuple[str, int, str]] = []
+    for source_id, identity in rows:
+        prefix = "github.com:repository:"
+        if not isinstance(identity, str) or not identity.startswith(prefix):
+            raise ValueError("private GitHub source has an invalid repository identity")
+        repository_id_text = identity.removeprefix(prefix)
+        if not repository_id_text.isdecimal() or int(repository_id_text) <= 0:
+            raise ValueError("private GitHub source has an invalid repository identity")
+        results.append((source_id, int(repository_id_text), identity))
+    return results
+
+
+def verify_private_source_authorization(
+    database_url: str,
+    source_id: str,
+    installation_id: int,
+    verified_until: datetime,
+) -> bool:
+    """Extend a lease only for an already active source in the same installation."""
+    if verified_until.tzinfo is None:
+        raise ValueError("authorization lease must be timezone-aware")
+    with psycopg.connect(database_url) as connection:
+        _apply_migrations(connection)
+        cursor = connection.execute(
+            """UPDATE knowledge_sources
+               SET authorization_verified_until = %s
+               WHERE source_id = %s AND source_kind = 'github'
+                 AND github_installation_id = %s AND lifecycle_state = 'active'""",
+            (verified_until, source_id, installation_id),
+        )
+        return cursor.rowcount == 1
+
+
+def record_github_webhook_delivery(database_url: str, delivery_id: str) -> bool:
+    """Record a completed webhook delivery exactly once."""
+    if not delivery_id or len(delivery_id) > 100 or any(ord(char) < 33 for char in delivery_id):
+        raise ValueError("GitHub webhook delivery ID is invalid")
+    with psycopg.connect(database_url) as connection:
+        _apply_migrations(connection)
+        connection.execute(
+            "DELETE FROM github_webhook_deliveries WHERE received_at < now() - interval '30 days'"
+        )
+        cursor = connection.execute(
+            """INSERT INTO github_webhook_deliveries (delivery_id)
+               VALUES (%s) ON CONFLICT (delivery_id) DO NOTHING""",
+            (delivery_id,),
+        )
+        return cursor.rowcount == 1
+
+
+def github_webhook_delivery_recorded(database_url: str, delivery_id: str) -> bool:
+    """Check whether a webhook delivery has completed successfully before."""
+    with psycopg.connect(database_url) as connection:
+        _apply_migrations(connection)
+        return (
+            connection.execute(
+                "SELECT 1 FROM github_webhook_deliveries WHERE delivery_id = %s",
+                (delivery_id,),
+            ).fetchone()
+            is not None
+        )
+
+
 def reconcile_source_lifecycle(
     database_url: str, *, ledger_path: str | Path | None = None
 ) -> tuple[int, int, int]:
@@ -307,7 +421,7 @@ def reconcile_source_lifecycle(
                     """UPDATE knowledge_sources
                        SET lifecycle_state = 'access_lost', access_lost_at = now(),
                            quarantine_expires_at = now() + (%s * interval '1 day'),
-                           deleted_at = NULL
+                           deleted_at = NULL, authorization_verified_until = NULL
                        WHERE source_id = %s""",
                     (SOURCE_QUARANTINE_DAYS, source_id),
                 )
@@ -391,6 +505,8 @@ def search_chunks(
                JOIN knowledge_sources AS s USING (source_id)
                WHERE c.embedding IS NOT NULL
                  AND s.lifecycle_state = 'active'
+                 AND (s.github_installation_id IS NULL
+                      OR s.authorization_verified_until > now())
                  AND c.embedding_provider = %s
                  AND c.embedding_model = %s
                  AND c.embedding_dimension = %s

@@ -1,3 +1,5 @@
+import hashlib
+import hmac
 from typing import Self
 
 import pytest
@@ -131,3 +133,72 @@ def test_question_endpoint_validates_request_bounds(payload: dict[str, object]) 
     response = TestClient(app).post("/api/ask", json=payload)
 
     assert response.status_code == 422
+
+
+def test_github_webhook_rejects_invalid_signature_before_processing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DATABASE_URL", "postgresql://example")
+    monkeypatch.setenv("KNOWLEDGE_AGENT_GITHUB_INSTALLATION_ID", "4567")
+    monkeypatch.setenv("KNOWLEDGE_AGENT_GITHUB_WEBHOOK_SECRET", "s" * 40)
+    monkeypatch.setattr(
+        "trussium_knowledge_agent.github_webhook.process_github_webhook",
+        lambda *_args, **_kwargs: pytest.fail("invalid signature must be rejected first"),
+    )
+
+    response = TestClient(app).post(
+        "/webhooks/github",
+        content=b'{"action":"deleted","installation":{"id":4567}}',
+        headers={
+            "x-hub-signature-256": "sha256=" + "0" * 64,
+            "x-github-delivery": "delivery-1",
+            "x-github-event": "installation",
+        },
+    )
+
+    assert response.status_code == 401
+
+
+def test_github_webhook_verifies_signature_and_passes_expected_installation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: dict[str, object] = {}
+    secret = "configured-test-webhook-secret" * 2
+    body = b'{"action":"suspend","installation":{"id":4567}}'
+    signature = "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+    monkeypatch.setenv("DATABASE_URL", "postgresql://example")
+    monkeypatch.setenv("KNOWLEDGE_AGENT_GITHUB_INSTALLATION_ID", "4567")
+    monkeypatch.setenv("KNOWLEDGE_AGENT_GITHUB_WEBHOOK_SECRET", secret)
+
+    def process(
+        database_url: str,
+        delivery_id: str,
+        event_name: str,
+        payload: dict[str, object],
+        *,
+        expected_installation_id: int,
+    ) -> bool:
+        observed.update(
+            database_url=database_url,
+            delivery_id=delivery_id,
+            event_name=event_name,
+            payload=payload,
+            expected_installation_id=expected_installation_id,
+        )
+        return True
+
+    monkeypatch.setattr("trussium_knowledge_agent.github_webhook.process_github_webhook", process)
+    response = TestClient(app).post(
+        "/webhooks/github",
+        content=body,
+        headers={
+            "x-hub-signature-256": signature,
+            "x-github-delivery": "delivery-2",
+            "x-github-event": "installation",
+        },
+    )
+
+    assert response.status_code == 202
+    assert observed["delivery_id"] == "delivery-2"
+    assert observed["expected_installation_id"] == 4567
+    assert observed["payload"] == {"action": "suspend", "installation": {"id": 4567}}

@@ -2,25 +2,24 @@
 
 ## Status
 
-Accepted. The explicit public-repository snapshot slice is implemented;
-private-repository authentication and automatic synchronization are deferred.
-The future private GitHub App security boundary is defined in
-[ADR 0007](0007-private-github-app-access-boundary.md); it is not implemented.
+Accepted. The explicit public-repository snapshot slice is implemented. The
+separate opt-in private GitHub App snapshot contract is defined and implemented
+in [ADR 0007](0007-private-github-app-access-boundary.md); automatic content
+synchronization remains deferred.
 
 ## Context
 
 The Knowledge Agent indexes explicitly selected local Markdown trees and
 supports a manually refreshed snapshot of a public GitHub repository. The
 local indexer bounds file size, rejects invalid UTF-8, avoids symlink traversal,
-and replaces a source's chunks transactionally. A private repository connector
-would add credentials, authorization-loss, and reconnection semantics that are
-not needed for the anonymous public-only slice and must remain a separate,
-tested design.
+and replaces a source's chunks transactionally. Private repository access has
+separate credentials, authorization-loss, and reconnection semantics; it is
+implemented as a distinct opt-in path and does not change public indexing.
 
-The implementation is public Markdown only. It does not authorize arbitrary
-repository formats, issue or pull request access, write operations, private
-repositories, GitHub Enterprise/custom hosts, webhooks, or automatic content
-ingestion.
+Both paths are Markdown only. They do not authorize arbitrary repository
+formats, issue or pull request access, write operations, GitHub
+Enterprise/custom hosts, or automatic content ingestion. Private snapshots
+use security-only webhooks that restrict access but never sync content.
 
 ## Decision
 
@@ -58,20 +57,19 @@ ingestion.
 - Public repository reads require no GitHub credential and are implemented.
   The CLI accepts only `owner/repository` plus a caller-selected ref; callers
   cannot supply arbitrary URLs, hosts, or redirect targets.
-- Private repositories are not supported in this slice. Before adding them,
-  prefer a GitHub App installation token rather than a personal access token.
-  Request only repository `Contents: read` and required `Metadata: read`, grant
-  access only to explicitly selected repositories, and add no write permission,
-  organization permission, Actions, administration, issues, pull requests, or
+- Private repositories require the separate opt-in GitHub App flow in ADR
+  0007. Request only repository `Contents: read` and endpoint-required metadata
+  access, install on explicitly selected repositories, and add no write,
+  organization, Actions, administration, issue, pull-request, or
   webhook-management permission.
 - Future tokens must be short-lived and kept in a secret store. Persist only the
   minimum installation/repository identifiers needed to refresh; never persist
   a private key or installation token in source metadata, logs, or the
   Knowledge Agent database.
-- If private access is added, the connector must verify that the requested
-  repository belongs to the authorized installation before reading content.
-  GitHub Enterprise Server and custom hosts remain deferred until their
-  endpoint validation and credential boundaries are designed.
+- Private access verifies a single repository through a repository-scoped
+  installation token before reading content. GitHub Enterprise Server and
+  custom hosts remain deferred until endpoint validation and credential
+  boundaries are designed.
 
 GitHub documents that installations can be limited to selected repositories
 and that apps receive only the permissions requested at installation. The
