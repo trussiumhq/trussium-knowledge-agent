@@ -9,9 +9,10 @@ a multi-user security or high-availability design.
 
 The application consists of the FastAPI process, PostgreSQL with pgvector, and
 a separately operated Trussium runtime. The app does not install or start the
-runtime. Compose is provided as a local development example; production can use
-a managed PostgreSQL service or an operator-managed PostgreSQL server. In
-either case, the `vector` extension must be installed on the PostgreSQL server
+runtime. The repository includes a Docker Compose self-hosting path for the app
+and PostgreSQL; production can also use a managed PostgreSQL service or an
+operator-managed PostgreSQL server. In either case, the `vector` extension must
+be installed on the PostgreSQL server
 and enabled in the application database before the app applies its migrations.
 See the [architecture](ARCHITECTURE.md) and the upstream
 [pgvector installation and extension instructions](https://github.com/pgvector/pgvector#installation).
@@ -25,6 +26,12 @@ clients over a protected connection. Do not treat its read-only tools as a
 replacement for access control on the app or database.
 
 ## Configuration and startup
+
+For an app-plus-PostgreSQL Compose setup, use the
+[container deployment guide](CONTAINER_DEPLOYMENT.md), which covers image
+build, loopback port binding, local indexing, persistence, upgrade, and restore
+considerations. The manual setup below remains useful for service managers and
+externally operated databases.
 
 Install Python 3.12+, `uv`, PostgreSQL client utilities, and the app's locked
 dependencies. Configure production values through a secret manager or a

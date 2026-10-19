@@ -110,6 +110,11 @@ Planned:
   loss, and backup/restore recovery. Do not enable private sources until the
   operator has verified the deployment boundary in
   [ADR 0007](adr/0007-private-github-app-access-boundary.md).
+- [x] Add a reproducible open-source container deployment path for the app and
+  PostgreSQL, with durable database and lifecycle-journal volumes, loopback-only
+  default access, and public-source demo instructions. This does not deploy a
+  public hosted instance or require private GitHub App credentials; see
+  [the container deployment guide](CONTAINER_DEPLOYMENT.md).
 
 ## Out of scope until separately proposed
 

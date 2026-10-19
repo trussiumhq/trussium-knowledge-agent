@@ -69,6 +69,12 @@ runtime APIs. For production network boundaries, dependency checks, backup,
 restore, and troubleshooting, see the
 [self-hosted operations guide](docs/OPERATIONS.md).
 
+To run both the app and PostgreSQL as containers, including the synthetic demo
+corpus, see the [container deployment guide](docs/CONTAINER_DEPLOYMENT.md).
+This open-source self-hosting path does not require private GitHub credentials;
+the app remains loopback-bound by default and is not safe to expose publicly
+without adding access and abuse controls.
+
 For a public GitHub repository, the CLI can build a complete bounded Markdown
 snapshot before atomically replacing the indexed revision:
 
