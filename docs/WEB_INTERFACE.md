@@ -10,12 +10,16 @@ command.
 Set `DATABASE_URL`, `TRUSSIUM_URL`, `TRUSSIUM_EMBEDDING_MODEL`, and
 `TRUSSIUM_CHAT_MODEL` in the ignored local `.env` file. Configure
 `TRUSSIUM_API_KEY` only when the runtime requires bearer authentication. Start
-PostgreSQL and the app:
+PostgreSQL and the app for development:
 
 ```bash
 docker compose --env-file .env up -d postgres
 uv run --env-file .env uvicorn trussium_knowledge_agent.app:app --reload --port 8000
 ```
+
+For a containerized local deployment, see the
+[container deployment guide](CONTAINER_DEPLOYMENT.md). It runs the app and
+database in Compose and keeps the app port bound to loopback by default.
 
 Open <http://127.0.0.1:8000/>. The application must be able to reach the
 configured runtime and database. The CLI remains available for indexing,
