@@ -62,8 +62,11 @@ write capabilities remain future work.
   qualitative and uncalibrated.
 - [ ] Consider human-approved issue creation only after approval UX, narrowly
   scoped credentials, audit events, and recovery behavior are designed.
-- [ ] Expand end-to-end checks for denied tools, cancellation, timeout, and
-  source-access boundaries as workflow behavior grows.
+- [x] Add a PostgreSQL-backed HTTP regression proving that expired private
+  source leases are excluded before evidence reaches chat generation.
+- [ ] Add cross-process workflow checks for denied tools, cancellation,
+  timeout, and source-access boundaries as workflow behavior grows. Existing
+  per-component tests do not replace this end-to-end validation.
 
 Exit criteria for the completed slice: the runtime invokes only explicitly
 registered tools; the audit is bounded and read-only; findings use
