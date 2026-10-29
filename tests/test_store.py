@@ -83,6 +83,47 @@ def test_search_excludes_the_reviewed_source_using_bound_parameters(
     )
 
 
+def test_search_restricts_public_demo_to_bound_source_allowlist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: dict[str, object] = {}
+
+    class Cursor:
+        def fetchall(self) -> list[tuple[object, ...]]:
+            return []
+
+    class Connection:
+        def __enter__(self) -> Self:
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+        def execute(self, query: str, parameters: tuple[object, ...]) -> Cursor:
+            observed["query"] = query
+            observed["parameters"] = parameters
+            return Cursor()
+
+    monkeypatch.setattr(store, "_apply_migrations", lambda _: None)
+    monkeypatch.setattr(psycopg, "connect", lambda _: Connection())
+
+    results = search_chunks(
+        "postgresql://example",
+        query_vector=(1.0, 0.0),
+        provider="provider",
+        model="model",
+        allowed_source_ids=("a" * 64, "b" * 64),
+    )
+
+    assert results == []
+    query = observed["query"]
+    assert isinstance(query, str)
+    assert "s.source_id = ANY(%s)" in query
+    parameters = observed["parameters"]
+    assert isinstance(parameters, tuple)
+    assert parameters[-3:] == (["a" * 64, "b" * 64], "[1.0,0.0]", 5)
+
+
 @pytest.mark.parametrize("limit", [0, 1001])
 def test_purge_rejects_unbounded_batch_sizes(limit: int) -> None:
     with pytest.raises(ValueError, match="limit"):

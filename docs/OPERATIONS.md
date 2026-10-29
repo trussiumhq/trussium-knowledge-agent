@@ -55,6 +55,16 @@ credentials in command arguments, or copy the development password from
 | `KNOWLEDGE_AGENT_GITHUB_PRIVATE_KEY_PATH` | Absolute path to an operator-managed PEM key file, owned by the service account, mode `0600`, and not a symlink. Never store the key in PostgreSQL or the repository. |
 | `KNOWLEDGE_AGENT_GITHUB_AUTHORIZATION_LEASE_SECONDS` | Optional retrieval authorization lease, default 900 seconds and bounded to 60–3600 seconds. Schedule reconciliation more frequently than this value. |
 | `KNOWLEDGE_AGENT_GITHUB_WEBHOOK_SECRET` | Optional high-entropy secret injected from a secret manager; 32 or more UTF-8 bytes. Required to process signed GitHub webhooks. |
+| `KNOWLEDGE_AGENT_PUBLIC_DEMO_MODE` | Defaults to `false`. Set to `true` only for the opt-in, guarded demo mode described below; startup fails unless all demo controls validate. |
+| `KNOWLEDGE_AGENT_PUBLIC_DEMO_IDENTITY_SECRET` | At least 32 random bytes shared only with the trusted HTTPS ingress that signs the short-lived demo identity cookie. Never expose it to browsers or logs. |
+| `KNOWLEDGE_AGENT_PUBLIC_DEMO_ORIGIN` | Exact public HTTPS origin, without a path, used to validate same-origin requests and ingress identity. |
+| `KNOWLEDGE_AGENT_PUBLIC_DEMO_SOURCE_IDS` | Comma-separated SHA-256 source IDs for the curated corpus. Startup verifies every source exists, is active, and is not a private GitHub source. |
+| `KNOWLEDGE_AGENT_PUBLIC_DEMO_TOKEN_ISSUER` / `KNOWLEDGE_AGENT_PUBLIC_DEMO_TOKEN_AUDIENCE` | Optional ingress token issuer and audience; use the documented defaults unless the ingress is configured otherwise. Tokens must expire within five minutes. |
+| `KNOWLEDGE_AGENT_PUBLIC_DEMO_DAILY_MODEL_CALL_LIMIT` | Maximum provider calls in a UTC day, default `100`, range `1`–`10000`. One embedding or chat request consumes one unit. This is not a dollar/token limit. |
+| `KNOWLEDGE_AGENT_PUBLIC_DEMO_IDENTITY_RATE_LIMIT` / `KNOWLEDGE_AGENT_PUBLIC_DEMO_IP_RATE_LIMIT` | Sliding-window request limits per identity and ingress-asserted client IP, per minute; defaults `10` and `20`, maximum `100` each. |
+| `KNOWLEDGE_AGENT_PUBLIC_DEMO_MAX_CONCURRENCY` | Maximum simultaneous question requests in this application process; default `4`, maximum `100`. |
+| `KNOWLEDGE_AGENT_PUBLIC_DEMO_MAX_BODY_BYTES` | Maximum HTTP request body; defaults to 65,536 bytes and cannot exceed that value in demo mode. |
+| `KNOWLEDGE_AGENT_PUBLIC_DEMO_KILL_SWITCH` | Any value other than empty, `false`, `0`, or `no` disables API traffic with HTTP 503. |
 
 `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DB` configure only the
 development Compose database. They do not configure the app's DB connection;
@@ -278,6 +288,55 @@ authorized. Use `remove-source SOURCE_ID` to purge an indexed source when it is
 no longer needed; remember that historical database backups follow their own
 retention policy. See [ADR 0007](adr/0007-private-github-app-access-boundary.md)
 for the authorization and recovery contract.
+
+## Guarded public-demo mode
+
+The ordinary browser UI is unauthenticated. Keep it on loopback or a trusted
+private network unless you have completed the public-demo gate. The guarded
+mode is opt-in and is not a hosted service or a substitute for infrastructure
+security. Review [ADR 0008](adr/0008-public-demo-security-boundary.md) before
+considering it.
+
+Public-demo mode requires all of the following before startup:
+
+1. Terminate HTTPS at a trusted ingress that authenticates or abuse-protects
+   visitors and signs a short-lived HS256 JWT into the secure,
+   host-only `__Host-tka-demo-identity` cookie. Include `iss`, `aud`, `sub`,
+   `client_ip`, `origin`, `iat`, and `exp`; expiry must be within five minutes.
+   Use the secret manager on both ingress and app sides. Never accept a client
+   IP from an unsigned header.
+2. Restrict network access so clients cannot bypass that ingress and reach the
+   application port directly. Configure the exact HTTPS origin and ensure the
+   ingress sends only same-origin browser requests.
+3. Set a curated allowlist of source IDs. Verify the corpus is intentionally
+   public or synthetic and contains no private or personal data. Do not set any
+   GitHub App, webhook, or MCP token configuration; startup rejects this.
+4. Set a conservative daily provider-call budget and configure provider-side
+   spending limits/alerts separately. The PostgreSQL quota counts each
+   embedding and chat call atomically across instances, but it does not measure
+   tokens or money. A request can consume an embedding call and then be
+   refused before chat if the budget runs out.
+5. Run one application worker, or add an ingress/shared limiter that enforces
+   identity/IP request rate and concurrency across all workers and replicas.
+   Built-in request-rate and concurrency state is process-local. PostgreSQL
+   shares only the daily call budget across instances.
+6. Exercise body-size rejection, missing/forged/expired tokens, wrong origin,
+   rate and concurrency limits, quota exhaustion and next-UTC-day reset,
+   kill-switch behavior, database/source validation failure, and an attempted
+   direct-origin request. Confirm access logs and metrics do not include
+   questions, answers, cookies, secrets, or model payloads.
+7. Rehearse backup and restore and a rollback that disables demo mode and
+   returns network access to private/loopback only. Keep monitoring and alert
+   contacts staffed before sharing any URL.
+
+Set `KNOWLEDGE_AGENT_PUBLIC_DEMO_MODE=true` only after the ingress and network
+boundary have been tested. If any required setting is invalid, startup stops.
+Set `KNOWLEDGE_AGENT_PUBLIC_DEMO_KILL_SWITCH=true` to immediately return HTTP
+503 from API routes; disable public routing at ingress as well. This project
+does not deploy a public instance or provision hosting, identity, secrets,
+monitoring, or a sample corpus. Do not advertise a public URL until the actual
+deployment rehearsal and evidence are complete. Keep loopback Compose bindings
+as the default.
 
 ## Health checks and routine operations
 

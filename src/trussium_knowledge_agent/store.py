@@ -43,6 +43,44 @@ def _apply_migrations(connection: psycopg.Connection[Any]) -> None:
         connection.execute("INSERT INTO schema_migrations (version) VALUES (%s)", (version,))
 
 
+def validate_public_demo_sources(database_url: str, allowed_source_ids: tuple[str, ...]) -> None:
+    """Fail closed unless every explicitly allowed demo source is public and active."""
+    if not allowed_source_ids or len(set(allowed_source_ids)) != len(allowed_source_ids):
+        raise ValueError("public demo source allowlist must be non-empty and unique")
+    with psycopg.connect(database_url) as connection:
+        _apply_migrations(connection)
+        rows = connection.execute(
+            """SELECT source_id, github_installation_id, lifecycle_state
+               FROM knowledge_sources WHERE source_id = ANY(%s)""",
+            (list(allowed_source_ids),),
+        ).fetchall()
+    if len(rows) != len(allowed_source_ids):
+        raise ValueError("public demo source allowlist contains a missing source")
+    if any(installation_id is not None or state != "active" for _, installation_id, state in rows):
+        raise ValueError(
+            "public demo sources must be active and must not use private GitHub access"
+        )
+
+
+def reserve_public_demo_model_call(database_url: str, daily_limit: int) -> bool:
+    """Atomically reserve one persistent UTC-day model-call unit before provider use."""
+    if not 1 <= daily_limit <= 10_000:
+        raise ValueError("daily model-call limit is outside its supported range")
+    with psycopg.connect(database_url) as connection:
+        _apply_migrations(connection)
+        row = connection.execute(
+            """INSERT INTO public_demo_model_usage (usage_day, model_calls)
+               VALUES ((now() AT TIME ZONE 'UTC')::date, 1)
+               ON CONFLICT (usage_day) DO UPDATE
+                 SET model_calls = public_demo_model_usage.model_calls + 1,
+                     updated_at = now()
+                 WHERE public_demo_model_usage.model_calls < %s
+               RETURNING model_calls""",
+            (daily_limit,),
+        ).fetchone()
+    return row is not None
+
+
 def persist_source(
     database_url: str,
     *,
@@ -466,6 +504,7 @@ def search_chunks(
     model: str,
     top_k: int = 5,
     exclude_source: tuple[str, str] | None = None,
+    allowed_source_ids: tuple[str, ...] | None = None,
 ) -> list[SearchResult]:
     """Return bounded exact cosine matches for one embedding identity."""
     if not 1 <= top_k <= 20:
@@ -482,6 +521,10 @@ def search_chunks(
         not exclude_source[0].strip() or not exclude_source[1].strip()
     ):
         raise ValueError("excluded source name and path must be non-empty")
+    if allowed_source_ids is not None and (
+        not allowed_source_ids or len(set(allowed_source_ids)) != len(allowed_source_ids)
+    ):
+        raise ValueError("allowed source IDs must be non-empty and unique")
     vector_literal = json.dumps(query_vector, separators=(",", ":"), allow_nan=False)
     exclusion = ""
     parameters: list[Any] = [
@@ -493,6 +536,10 @@ def search_chunks(
     if exclude_source is not None:
         exclusion = "AND NOT (s.display_name = %s AND c.relative_path = %s)"
         parameters.extend(exclude_source)
+    source_filter = ""
+    if allowed_source_ids is not None:
+        source_filter = "AND s.source_id = ANY(%s)"
+        parameters.append(list(allowed_source_ids))
     parameters.append(vector_literal)
     parameters.append(top_k)
     with psycopg.connect(database_url) as connection:
@@ -511,6 +558,7 @@ def search_chunks(
                  AND c.embedding_model = %s
                  AND c.embedding_dimension = %s
                  {exclusion}
+                 {source_filter}
                ORDER BY c.embedding <=> %s::vector ASC, c.chunk_id ASC
                LIMIT %s""",
             tuple(parameters),
