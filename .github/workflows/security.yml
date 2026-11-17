@@ -41,4 +41,3 @@ jobs:
         with:
           inputs: /tmp/requirements.txt
           require-hashes: true
-          disable-pip: true
