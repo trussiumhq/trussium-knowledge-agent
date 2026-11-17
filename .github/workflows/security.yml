@@ -36,8 +36,9 @@ jobs:
           --no-emit-package trussium
           --no-emit-package trussium-sdk
           --output-file /tmp/requirements.txt
-      - name: Audit dependencies
-        uses: pypa/gh-action-pip-audit@v1.1.0
-        with:
-          inputs: /tmp/requirements.txt
-          no-deps: true
+      - name: Audit locked dependencies
+        run: >-
+          uvx --from pip-audit==2.10.1 pip-audit
+          --disable-pip
+          --require-hashes
+          --requirement /tmp/requirements.txt
