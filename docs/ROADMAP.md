@@ -62,8 +62,8 @@ write capabilities remain future work.
   qualitative and uncalibrated.
 - [ ] Consider human-approved issue creation only after approval UX, narrowly
   scoped credentials, audit events, and recovery behavior are designed.
-- [ ] Expand end-to-end checks for denied tools, cancellation, timeout, and
-  source-access boundaries as workflow behavior grows.
+- [x] Expand end-to-end checks for denied tools, cancellation, timeout, and
+  source-access boundaries across real local HTTP processes.
 
 Exit criteria for the completed slice: the runtime invokes only explicitly
 registered tools; the audit is bounded and read-only; findings use

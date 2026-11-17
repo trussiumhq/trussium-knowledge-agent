@@ -28,6 +28,10 @@ dev = [
     "pytest>=8.4.1",
     "ruff>=0.12.5",
 ]
+integration = [
+    "trussium @ git+https://github.com/trussiumhq/trussium.git@v1.30.1",
+    "trussium-sdk @ git+https://github.com/trussiumhq/trussium-python.git@v0.3.0",
+]
 
 [tool.ruff]
 line-length = 100

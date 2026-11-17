@@ -40,7 +40,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v7
       - name: Install locked dependencies
-        run: uv sync --locked --all-groups
+        run: uv sync --locked --all-groups --no-group integration
       - name: Enable pgvector for integration tests
         run: |
           uv run python - <<'PY'
@@ -55,8 +55,34 @@ jobs:
       - name: Check formatting
         run: uv run ruff format --check .
       - name: Lint
-        run: uv run ruff check src tests
+        run: uv run ruff check src tests integration_tests
       - name: Type check
         run: uv run mypy src tests
       - name: Test
-        run: uv run pytest
+        run: uv run pytest --ignore=integration_tests
+
+  workflow-integration:
+    name: Cross-process Trussium workflow checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+      - name: Install locked integration dependencies
+        run: uv sync --locked --group dev --group integration
+      - name: Check integration formatting
+        run: uv run ruff format --check integration_tests
+      - name: Lint integration checks
+        run: uv run ruff check integration_tests
+      - name: Type-check integration checks
+        run: uv run mypy integration_tests
+      - name: Run cross-process workflow checks
+        run: uv run pytest integration_tests
