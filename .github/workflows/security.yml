@@ -40,4 +40,4 @@ jobs:
         uses: pypa/gh-action-pip-audit@v1.1.0
         with:
           inputs: /tmp/requirements.txt
-          require-hashes: true
+          no-deps: true
