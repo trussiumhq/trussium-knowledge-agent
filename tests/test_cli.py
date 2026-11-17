@@ -9,6 +9,7 @@ from trussium_knowledge_agent import cli
 from trussium_knowledge_agent.answers import AnswerCitation, AnswerResult
 from trussium_knowledge_agent.chat import ChatCompletion
 from trussium_knowledge_agent.evaluation import EvaluationQuery, ExpectedPassage
+from trussium_knowledge_agent.github_app import GitHubAppConfig
 from trussium_knowledge_agent.indexer import IndexResult
 from trussium_knowledge_agent.store import SearchResult
 
@@ -56,6 +57,92 @@ def test_cli_index_reports_summary(
 
     assert exit_code == 0
     assert "Indexed 2 Markdown files into 3 chunks" in capsys.readouterr().out
+
+
+def test_cli_index_github_reports_full_commit_and_source_id(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("DATABASE_URL", "postgresql://example")
+    monkeypatch.setenv("TRUSSIUM_EMBEDDING_MODEL", "test-model")
+    monkeypatch.setattr(cli, "TrussiumEmbeddingsClient", lambda *args, **kwargs: FakeRuntime())
+    monkeypatch.setattr(
+        cli,
+        "index_public_github_source",
+        lambda repository, ref, database_url, client, model, **kwargs: IndexResult(
+            source_id="a" * 64,
+            display_name=repository,
+            revision="b" * 40,
+            file_count=2,
+            chunk_count=3,
+        ),
+    )
+
+    exit_code = cli.main(["index-github", "acme/docs", "--ref", "main"])
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert "public GitHub repository acme/docs" in output
+    assert "b" * 40 in output
+    assert "a" * 64 in output
+
+
+def test_cli_index_private_github_reports_snapshot(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    monkeypatch.setenv("DATABASE_URL", "postgresql://example")
+    monkeypatch.setenv("TRUSSIUM_EMBEDDING_MODEL", "test-model")
+    config = GitHubAppConfig(1, 2, tmp_path / "private-key.pem")
+    monkeypatch.setattr(GitHubAppConfig, "from_environment", lambda: config)
+    monkeypatch.setattr(cli, "TrussiumEmbeddingsClient", lambda *args, **kwargs: FakeRuntime())
+    monkeypatch.setattr(
+        cli,
+        "index_private_github_source",
+        lambda repository_id, ref, database_url, client, model, app_config, **kwargs: IndexResult(
+            source_id="a" * 64,
+            display_name=f"private/{repository_id}",
+            revision="b" * 40,
+            file_count=2,
+            chunk_count=3,
+        ),
+    )
+
+    exit_code = cli.main(["index-github-private", "4242", "--ref", "main"])
+
+    assert exit_code == 0
+    assert "Indexed private GitHub repository private/4242" in capsys.readouterr().out
+
+
+def test_cli_private_github_reconcile_reports_expired_or_failed_sources(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    monkeypatch.setenv("DATABASE_URL", "postgresql://example")
+    config = GitHubAppConfig(1, 2, tmp_path / "private-key.pem")
+    monkeypatch.setattr(GitHubAppConfig, "from_environment", lambda: config)
+    monkeypatch.setattr(
+        cli,
+        "reconcile_private_github_authorization",
+        lambda _database_url, _config: (3, 1, 2),
+    )
+
+    exit_code = cli.main(["reconcile-private-github"])
+
+    assert exit_code == 1
+    assert capsys.readouterr().out == (
+        "Private GitHub authorization: 3 verified, 1 revoked, 2 temporarily unavailable.\n"
+    )
+
+
+def test_cli_remove_source_accepts_full_source_id(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    source_id = "a" * 64
+    monkeypatch.setenv("DATABASE_URL", "postgresql://example")
+    monkeypatch.setattr(cli, "remove_source", lambda _url, identity: identity == source_id)
+
+    exit_code = cli.main(["remove-source", source_id])
+
+    assert exit_code == 0
+    assert capsys.readouterr().out == "Removed indexed source.\n"
 
 
 def test_cli_search_prints_citation_and_score(
@@ -189,5 +276,40 @@ def test_cli_requires_database_url(monkeypatch: pytest.MonkeyPatch) -> None:
 
     with pytest.raises(SystemExit) as exc_info:
         cli.main(["index", "/tmp/manuals"])
+
+    assert exc_info.value.code == 2
+
+
+def test_cli_purges_expired_sources_without_runtime_configuration(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("DATABASE_URL", "postgresql://example")
+    monkeypatch.delenv("TRUSSIUM_EMBEDDING_MODEL", raising=False)
+    monkeypatch.setattr(cli, "purge_expired_sources", lambda _url, *, limit: 2 if limit == 3 else 0)
+
+    exit_code = cli.main(["purge-expired-sources", "--limit", "3"])
+
+    assert exit_code == 0
+    assert capsys.readouterr().out == "Purged 2 expired source(s).\n"
+
+
+def test_cli_reconciles_source_lifecycle(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("DATABASE_URL", "postgresql://example")
+    monkeypatch.setenv("KNOWLEDGE_AGENT_LIFECYCLE_LEDGER_PATH", "/var/lib/agent/lifecycle.jsonl")
+    monkeypatch.setattr(cli, "reconcile_source_lifecycle", lambda *args, **kwargs: (2, 1, 3))
+
+    exit_code = cli.main(["reconcile-source-lifecycle"])
+
+    assert exit_code == 0
+    assert capsys.readouterr().out == (
+        "Reconciled source lifecycle: 2 deleted, 1 quarantined, 3 already absent.\n"
+    )
+
+
+def test_cli_bounds_expired_source_purge_batch() -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["purge-expired-sources", "--limit", "1001"])
 
     assert exc_info.value.code == 2

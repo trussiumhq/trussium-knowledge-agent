@@ -7,13 +7,15 @@ import sys
 from typing import Literal
 
 import psycopg
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from trussium_knowledge_agent.answers import INSUFFICIENT_ANSWER, answer_from_passages
 from trussium_knowledge_agent.chat import TrussiumChatClient
 from trussium_knowledge_agent.embeddings import TrussiumEmbeddingsClient
+from trussium_knowledge_agent.public_demo import PublicDemoConfig
 from trussium_knowledge_agent.retrieval import search_index
+from trussium_knowledge_agent.store import reserve_public_demo_model_call
 
 router = APIRouter()
 
@@ -50,7 +52,7 @@ def _unavailable() -> HTTPException:
 
 
 @router.post("/api/ask", response_model=QuestionResponse, tags=["questions"])
-def ask_question(request: QuestionRequest) -> QuestionResponse:
+def ask_question(request: QuestionRequest, http_request: Request) -> QuestionResponse:
     """Retrieve indexed evidence and return a citation-validated answer."""
     database_url = os.environ.get("DATABASE_URL", "").strip()
     embedding_model = os.environ.get("TRUSSIUM_EMBEDDING_MODEL", "").strip()
@@ -63,10 +65,19 @@ def ask_question(request: QuestionRequest) -> QuestionResponse:
 
     base_url = os.environ.get("TRUSSIUM_URL", "http://127.0.0.1:9000")
     api_key = os.environ.get("TRUSSIUM_API_KEY") or None
+    demo_config = getattr(http_request.state, "public_demo_config", None)
+    if demo_config is not None and not isinstance(demo_config, PublicDemoConfig):
+        raise _unavailable()
     try:
         timeout_seconds = float(os.environ.get("TRUSSIUM_TIMEOUT_SECONDS", "30"))
         if not 0 < timeout_seconds <= 120:
             raise ValueError("timeout is outside the supported range")
+        if demo_config is not None and not reserve_public_demo_model_call(
+            database_url, demo_config.daily_model_call_limit
+        ):
+            raise HTTPException(
+                status_code=429, detail="The public demo daily usage limit was reached."
+            )
         with TrussiumEmbeddingsClient(
             base_url, api_key=api_key, timeout_seconds=timeout_seconds
         ) as embeddings_client:
@@ -76,6 +87,9 @@ def ask_question(request: QuestionRequest) -> QuestionResponse:
                 embeddings_client,
                 embedding_model,
                 top_k=request.limit,
+                allowed_source_ids=(
+                    demo_config.allowed_source_ids if demo_config is not None else None
+                ),
             )
         if not passages:
             return QuestionResponse(
@@ -85,6 +99,12 @@ def ask_question(request: QuestionRequest) -> QuestionResponse:
         chat_model = os.environ.get("TRUSSIUM_CHAT_MODEL", "").strip()
         if not chat_model or chat_model == "replace-with-runtime-chat-model":
             raise _unavailable()
+        if demo_config is not None and not reserve_public_demo_model_call(
+            database_url, demo_config.daily_model_call_limit
+        ):
+            raise HTTPException(
+                status_code=429, detail="The public demo daily usage limit was reached."
+            )
         with TrussiumChatClient(
             base_url, api_key=api_key, timeout_seconds=timeout_seconds
         ) as chat_client:

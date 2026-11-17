@@ -51,7 +51,22 @@ jobs:
               connection.execute("CREATE EXTENSION IF NOT EXISTS vector")
           PY
       - name: Validate local services
-        run: docker compose --env-file .env.example config --quiet
+        run: |
+          trap 'rm -f .env' EXIT
+          cp .env.example .env
+          docker compose config --format json | python -c '
+          import json
+          import sys
+
+          services = json.load(sys.stdin)["services"]
+          for name in ("app", "postgres"):
+              assert all(port.get("host_ip") == "127.0.0.1" for port in services[name]["ports"])
+          assert "@postgres:5432/" in services["app"]["environment"]["DATABASE_URL"]
+          assert "knowledge-agent-postgres" in str(services["postgres"]["volumes"])
+          assert "knowledge-agent-lifecycle" in str(services["app"]["volumes"])
+          '
+      - name: Build container image
+        run: docker build --tag trussium-knowledge-agent:ci .
       - name: Check formatting
         run: uv run ruff format --check .
       - name: Lint

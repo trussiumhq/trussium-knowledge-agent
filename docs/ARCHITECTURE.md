@@ -61,17 +61,42 @@ runtime.
    rendering treats answer and source strings as text, not HTML; it displays
    source paths and heading anchors without serving arbitrary local files.
 
-Ingestion is repeatable and idempotent for an explicitly selected local source.
-Only Markdown is supported initially. Other formats and external connectors
-require separate parser, access-control, and deletion decisions.
+Ingestion is repeatable and idempotent for explicitly selected local sources
+and manually refreshed GitHub repositories. Snapshots use fixed GitHub API
+hosts, are pinned to a commit SHA, and are bounded before index replacement.
+Private GitHub snapshots are opt-in and require a selected-repository GitHub
+App; a SQL-level authorization lease and signed security webhooks restrict
+retrieval after access changes. The webhook never triggers content refresh.
+Public snapshots remain tokenless. Other formats and external connectors
+require separate parser, access-control, and deletion decisions. See
+[`ADR 0005`](adr/0005-github-markdown-source-connector.md) for the public
+connector contract and [`ADR 0007`](adr/0007-private-github-app-access-boundary.md)
+for the private access boundary.
 
-The first implementation stores only a SHA-256 identifier derived from the
-canonical local source path, not the absolute path itself. It records the
-repository name, optional Git `HEAD` revision, per-file content hashes,
-relative paths, heading paths/anchors, and deterministic chunk IDs. Index
-replacement and migration application run in one database transaction. A
+Local source IDs are SHA-256 hashes of the canonical source path, not stored
+absolute paths. GitHub source IDs are hashes of the host and immutable numeric
+repository ID; display metadata holds its current owner/name. Both record a
+pinned revision where available, per-file content hashes, relative paths,
+heading paths/anchors, and deterministic chunk IDs. Index replacement and
+migration application run in one database transaction. A
 Markdown file larger than 5 MiB or one that is not valid UTF-8 causes indexing
 to fail before database state is changed. `.git` metadata is excluded.
+
+Source rows now record whether a source is local or GitHub-backed and its
+bounded immutable external identity when applicable. A source is either
+`active` or `access_lost`; access-lost chunks remain stored but are excluded by
+the retrieval SQL query. Private GitHub sources also record their installation
+and an authorization freshness deadline; retrieval excludes a source as soon
+as the lease expires. GitHub App authentication is opt-in and limited to one
+selected repository per token. Security webhooks and scheduled reconciliation
+hide confirmed or unverifiable sources; content refresh remains explicit.
+Reactivation requires a matching identity and a successfully embedded fresh
+snapshot. The 30-day quarantine has an explicit bounded purge operation.
+Deletion and confirmed access loss are recorded in a restrictive,
+append-only JSON Lines journal outside PostgreSQL backups. A recovered database
+must be reconciled against that journal before application traffic is enabled;
+reconciliation can delete or quarantine sources but never reactivates them.
+See [`ADR 0006`](adr/0006-restore-safe-source-lifecycle.md).
 
 Vectors are stored in pgvector's variable-dimension `vector` type. Each row
 records provider, resolved model, and dimension, and retrieval filters on all
@@ -136,4 +161,6 @@ The starter Compose file runs PostgreSQL with the pgvector extension on
 `127.0.0.1:5433`. The Trussium runtime remains an independently configured
 service, normally on port `9000`. The FastAPI application runs on port `8000`.
 Production deployments must supply managed secrets, backups, TLS, and a
-network policy appropriate to their environment.
+network policy appropriate to their environment. See the
+[self-hosted operations guide](OPERATIONS.md) for configuration, health checks,
+PostgreSQL backup/restore, and troubleshooting procedures.

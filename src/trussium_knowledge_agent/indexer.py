@@ -5,10 +5,16 @@ from __future__ import annotations
 import hashlib
 import os
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from trussium_knowledge_agent.chunking import Chunk
 from trussium_knowledge_agent.embeddings import EmbeddingsClient
+from trussium_knowledge_agent.github_app import GitHubAppConfig, create_installation_token
+from trussium_knowledge_agent.github_snapshot import (
+    fetch_private_github_snapshot,
+    fetch_public_github_snapshot,
+)
 from trussium_knowledge_agent.markdown import canonical_root, load_chunks
 from trussium_knowledge_agent.store import persist_source, remove_source
 
@@ -53,6 +59,136 @@ def index_source(
         source_root, max_chars=max_chars, overlap_chars=overlap_chars
     )
     source_id = source_id_for_root(root)
+    embedded_chunks, identity = _embed_chunks(
+        chunks, embeddings_client, model, batch_size=batch_size
+    )
+    persist_source(
+        database_url,
+        source_id=source_id,
+        display_name=root.name or "Markdown source",
+        revision=revision,
+        chunks=embedded_chunks,
+    )
+    return IndexResult(
+        source_id=source_id,
+        display_name=root.name or "Markdown source",
+        revision=revision,
+        file_count=file_count,
+        chunk_count=len(embedded_chunks),
+        embedding_provider=identity[0] if identity else None,
+        embedding_model=identity[1] if identity else None,
+        embedding_dimension=identity[2] if identity else None,
+    )
+
+
+def index_public_github_source(
+    repository: str,
+    ref: str,
+    database_url: str,
+    embeddings_client: EmbeddingsClient,
+    model: str,
+    *,
+    max_chars: int = 1600,
+    overlap_chars: int = 200,
+    batch_size: int = EMBEDDING_BATCH_SIZE,
+) -> IndexResult:
+    """Build a complete public GitHub snapshot before replacing its index."""
+    if batch_size < 1 or batch_size > EMBEDDING_BATCH_SIZE:
+        raise ValueError(f"batch_size must be between 1 and {EMBEDDING_BATCH_SIZE}")
+    snapshot = fetch_public_github_snapshot(
+        repository,
+        ref,
+        max_chars=max_chars,
+        overlap_chars=overlap_chars,
+    )
+    source_id = hashlib.sha256(snapshot.source_identity.encode("utf-8")).hexdigest()
+    embedded_chunks, identity = _embed_chunks(
+        list(snapshot.chunks), embeddings_client, model, batch_size=batch_size
+    )
+    persist_source(
+        database_url,
+        source_id=source_id,
+        display_name=snapshot.repository,
+        revision=snapshot.revision,
+        chunks=embedded_chunks,
+        source_kind="github",
+        source_identity=snapshot.source_identity,
+    )
+    return IndexResult(
+        source_id=source_id,
+        display_name=snapshot.repository,
+        revision=snapshot.revision,
+        file_count=snapshot.file_count,
+        chunk_count=len(embedded_chunks),
+        embedding_provider=identity[0] if identity else None,
+        embedding_model=identity[1] if identity else None,
+        embedding_dimension=identity[2] if identity else None,
+    )
+
+
+def index_private_github_source(
+    repository_id: int,
+    ref: str,
+    database_url: str,
+    embeddings_client: EmbeddingsClient,
+    model: str,
+    config: GitHubAppConfig,
+    *,
+    max_chars: int = 1600,
+    overlap_chars: int = 200,
+    batch_size: int = EMBEDDING_BATCH_SIZE,
+) -> IndexResult:
+    """Refresh one private repository with a single-repository scoped token."""
+    if batch_size < 1 or batch_size > EMBEDDING_BATCH_SIZE:
+        raise ValueError(f"batch_size must be between 1 and {EMBEDDING_BATCH_SIZE}")
+    token = create_installation_token(config, repository_id)
+    snapshot = fetch_private_github_snapshot(
+        repository_id,
+        ref,
+        token.value,
+        max_chars=max_chars,
+        overlap_chars=overlap_chars,
+    )
+    source_identity = snapshot.source_identity
+    source_id = hashlib.sha256(source_identity.encode("utf-8")).hexdigest()
+    embedded_chunks, identity = _embed_chunks(
+        list(snapshot.chunks), embeddings_client, model, batch_size=batch_size
+    )
+    verified_at = datetime.now(UTC)
+    verified_until = min(
+        verified_at + timedelta(seconds=config.authorization_lease_seconds),
+        token.expires_at,
+    )
+    persist_source(
+        database_url,
+        source_id=source_id,
+        display_name=snapshot.repository,
+        revision=snapshot.revision,
+        chunks=embedded_chunks,
+        source_kind="github",
+        source_identity=source_identity,
+        github_installation_id=config.installation_id,
+        authorization_verified_until=verified_until,
+    )
+    return IndexResult(
+        source_id=source_id,
+        display_name=snapshot.repository,
+        revision=snapshot.revision,
+        file_count=snapshot.file_count,
+        chunk_count=len(embedded_chunks),
+        embedding_provider=identity[0] if identity else None,
+        embedding_model=identity[1] if identity else None,
+        embedding_dimension=identity[2] if identity else None,
+    )
+
+
+def _embed_chunks(
+    chunks: list[Chunk],
+    embeddings_client: EmbeddingsClient,
+    model: str,
+    *,
+    batch_size: int,
+) -> tuple[list[Chunk], tuple[str, str, int] | None]:
     embedded_chunks: list[Chunk] = []
     identity: tuple[str, str, int] | None = None
     for start in range(0, len(chunks), batch_size):
@@ -77,23 +213,7 @@ def index_source(
             )
             for chunk, vector in zip(batch_chunks, response.vectors, strict=True)
         )
-    persist_source(
-        database_url,
-        source_id=source_id,
-        display_name=root.name or "Markdown source",
-        revision=revision,
-        chunks=embedded_chunks,
-    )
-    return IndexResult(
-        source_id=source_id,
-        display_name=root.name or "Markdown source",
-        revision=revision,
-        file_count=file_count,
-        chunk_count=len(embedded_chunks),
-        embedding_provider=identity[0] if identity else None,
-        embedding_model=identity[1] if identity else None,
-        embedding_dimension=identity[2] if identity else None,
-    )
+    return embedded_chunks, identity
 
 
 def remove_index(source_root: str | Path, database_url: str) -> bool:

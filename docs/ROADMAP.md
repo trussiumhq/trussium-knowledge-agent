@@ -64,6 +64,11 @@ write capabilities remain future work.
   scoped credentials, audit events, and recovery behavior are designed.
 - [x] Expand end-to-end checks for denied tools, cancellation, timeout, and
   source-access boundaries across real local HTTP processes.
+- [x] Add a PostgreSQL-backed HTTP regression proving that expired private
+  source leases are excluded before evidence reaches chat generation.
+- [ ] Add cross-process workflow checks for denied tools, cancellation,
+  timeout, and source-access boundaries as workflow behavior grows. Existing
+  per-component tests do not replace this end-to-end validation.
 
 Exit criteria for the completed slice: the runtime invokes only explicitly
 registered tools; the audit is bounded and read-only; findings use
@@ -82,10 +87,39 @@ Planned:
 - [ ] Expand reviewed answer-quality examples only when a safe, reproducible
   scoring method is defined; current retrieval metrics do not assess generated
   answer truth or completeness.
-- Document self-hosted deployment, database backup/restore, configuration,
+- [x] Document self-hosted deployment, database backup/restore, configuration,
   health checks, and troubleshooting.
-- Add optional source connectors only when their access and deletion semantics
-  are documented and tested.
+- [x] Define the GitHub Markdown connector's least-privilege access, immutable
+  revision snapshots, refresh failure behavior, authorization-loss handling,
+  and deletion semantics in [ADR 0005](adr/0005-github-markdown-source-connector.md).
+- [x] Add constrained source lifecycle state, SQL-level retrieval exclusion,
+  identity-checked reactivation, bounded quarantine expiry, and an operator
+  purge command.
+- [x] Add an append-only external source lifecycle journal and transactional,
+  fail-closed reconciliation for database restores; validate it in a
+  disposable PostgreSQL restore rehearsal. Private GitHub source ingestion
+  remains disabled until target operators validate their deployment boundary.
+- [x] Implement explicit, bounded public GitHub Markdown snapshots pinned to
+  commit SHAs; verify failed refresh preservation, database replacement, and
+  lifecycle-aware removal.
+- [x] Define the least-privilege private GitHub App access, revocation,
+  reconciliation, and reauthorization boundary in
+  [ADR 0007](adr/0007-private-github-app-access-boundary.md). This is design
+  only; private ingestion remains unavailable.
+- [x] Implement opt-in private GitHub Markdown snapshots using a selected-
+  repository App token, API-only blob reads, signed security webhooks,
+  authorization leases, SQL-level lease expiry, lifecycle journaling, and
+  fresh-snapshot reactivation; keep credentials unconfigured by default.
+- [ ] Rehearse private GitHub access in each target deployment: key handling,
+  HTTPS webhook reachability, scheduled lease reconciliation, authorization
+  loss, and backup/restore recovery. Do not enable private sources until the
+  operator has verified the deployment boundary in
+  [ADR 0007](adr/0007-private-github-app-access-boundary.md).
+- [x] Add a reproducible open-source container deployment path for the app and
+  PostgreSQL, with durable database and lifecycle-journal volumes, loopback-only
+  default access, and public-source demo instructions. This does not deploy a
+  public hosted instance or require private GitHub App credentials; see
+  [the container deployment guide](CONTAINER_DEPLOYMENT.md).
 
 ## Out of scope until separately proposed
 

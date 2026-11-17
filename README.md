@@ -21,7 +21,16 @@ Markdown link audit; it does not autonomously edit repositories. See the
 - An existing Trussium runtime for chat and embeddings; reranking integration
   remains future work.
 - PostgreSQL with pgvector for document chunks, source metadata, and vectors.
-- Local Markdown repositories as the first ingestion source.
+- Explicitly selected local Markdown repositories and bounded, manually
+  refreshed public GitHub snapshots pinned to a full commit SHA.
+- Opt-in private GitHub snapshots using a selected-repository GitHub App with
+  Contents: read, short-lived scoped tokens, signed security webhooks, and
+  expiring authorization leases. No private configuration is enabled by
+  default, and private content is excluded after its lease expires. See
+  [ADR 0007](docs/adr/0007-private-github-app-access-boundary.md) and the
+  [private GitHub operations guide](docs/OPERATIONS.md#opt-in-private-github-snapshots).
+- GitHub content synchronization remains explicit; security webhooks only
+  restrict source access and never trigger content ingestion.
 - An opt-in Trussium runtime with explicitly registered tools for bounded
   documentation search and deterministic audits. External issue or pull
   request creation is not implemented.
@@ -56,7 +65,27 @@ an indexed corpus, PostgreSQL with pgvector at `127.0.0.1:5433`, and a reachable
 Trussium runtime. The service also exposes
 `GET http://127.0.0.1:8000/health/live`. PostgreSQL data is stored in a named
 Docker volume. The browser and CLI call the separately configured Trussium
-runtime APIs.
+runtime APIs. For production network boundaries, dependency checks, backup,
+restore, and troubleshooting, see the
+[self-hosted operations guide](docs/OPERATIONS.md).
+
+To run both the app and PostgreSQL as containers, including the synthetic demo
+corpus, see the [container deployment guide](docs/CONTAINER_DEPLOYMENT.md).
+This open-source self-hosting path does not require private GitHub credentials;
+the app remains loopback-bound by default and is not safe to expose publicly
+without adding access and abuse controls.
+
+For a public GitHub repository, the CLI can build a complete bounded Markdown
+snapshot before atomically replacing the indexed revision:
+
+```bash
+uv run --env-file .env trussium-knowledge-agent index-github OWNER/REPOSITORY --ref main
+```
+
+The command prints the full source ID for later removal with
+`trussium-knowledge-agent remove-source SOURCE_ID`. See the
+[public GitHub refresh and source lifecycle runbook](docs/OPERATIONS.md#explicit-public-github-refresh)
+for limits, refresh behavior, and recovery safeguards.
 
 ### Read-only MCP tool endpoint
 
@@ -127,8 +156,8 @@ selected root. Re-indexing replaces that source's chunks transactionally;
 removing an index deletes its stored source and chunks. Markdown files over
 5 MiB or invalid UTF-8 abort the operation before database state changes. Git
 metadata is optional; when available the checked-out `HEAD` is recorded. The
-runtime timeout defaults to 30 seconds and accepts values from 1 through 120
-seconds via `TRUSSIUM_TIMEOUT_SECONDS`. The search limit is bounded from 1 to
+runtime timeout defaults to 30 seconds and must be positive and no more than
+120 seconds via `TRUSSIUM_TIMEOUT_SECONDS`. The search limit is bounded from 1 to
 20 and results include cosine scores and source paths/headings. `ask` accepts a
 question up to 4,000 characters, uses at most 10 passages, and returns an answer
 only when citations map to retrieved source metadata. Empty retrieval,
