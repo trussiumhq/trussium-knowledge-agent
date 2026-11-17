@@ -81,9 +81,10 @@ Planned:
 - [x] Add a small synthetic, human-reviewable guidance-review case set and a
   case-by-case inspection command; do not treat agreement as calibrated
   accuracy or a release threshold.
-- [ ] Expand reviewed answer-quality examples only when a safe, reproducible
-  scoring method is defined; current retrieval metrics do not assess generated
-  answer truth or completeness.
+- [x] Add fixed synthetic generated-answer review cases with human-authored
+  reference points, citations, and a repeatable reviewer rubric. The review is
+  per-case and manual; it does not claim calibrated accuracy or define a release
+  threshold. See [the evaluation guide](EVALUATION.md#generated-answer-quality-review).
 - [x] Document self-hosted deployment, database backup/restore, configuration,
   health checks, and troubleshooting.
 - [x] Define the GitHub Markdown connector's least-privilege access, immutable
