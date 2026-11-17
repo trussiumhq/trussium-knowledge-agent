@@ -218,6 +218,15 @@ contains the tool name and output for each step. Failed, timed-out, or cancelled
 calls must be handled as non-success; do not treat partial output as a clean
 audit.
 
+The cross-process regression suite starts the Knowledge Agent MCP service and
+the custom Runtime as separate loopback HTTP processes, then uses the SDK over
+the Runtime API. It covers successful auditing, unknown-tool denial, rejected
+caller-supplied source paths, deadline cancellation, and client-disconnect
+cancellation. Run it with `uv sync --group dev --group integration` followed
+by `uv run pytest integration_tests`. The suite uses ephemeral ports and
+temporary files; it needs no database, model provider, hosted endpoint, or
+Docker service.
+
 ## What is and is not implemented
 
 Implemented: Markdown RAG, grounded cited answers, retrieval evaluation, fixed

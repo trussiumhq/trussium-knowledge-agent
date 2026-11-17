@@ -27,8 +27,18 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v7
       - name: Export locked dependencies
-        run: uv export --locked --all-groups --format requirements-txt --no-emit-project --output-file /tmp/requirements.txt
-      - name: Audit dependencies
-        uses: pypa/gh-action-pip-audit@v1.1.0
-        with:
-          inputs: /tmp/requirements.txt
+        # pip-audit cannot install/hash VCS dependencies. Omit only the two
+        # Git-sourced project distributions; uv still exports their locked
+        # registry dependencies below so those remain in the audit.
+        run: >-
+          uv export --locked --all-groups --format requirements-txt
+          --no-emit-project
+          --no-emit-package trussium
+          --no-emit-package trussium-sdk
+          --output-file /tmp/requirements.txt
+      - name: Audit locked dependencies
+        run: >-
+          uvx --from pip-audit==2.10.1 pip-audit
+          --disable-pip
+          --require-hashes
+          --requirement /tmp/requirements.txt
