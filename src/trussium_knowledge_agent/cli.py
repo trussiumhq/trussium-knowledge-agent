@@ -9,6 +9,10 @@ from collections.abc import Sequence
 
 import psycopg
 
+from trussium_knowledge_agent.answer_quality_evaluation import (
+    evaluate_answer_quality_cases,
+    load_answer_quality_cases,
+)
 from trussium_knowledge_agent.answers import answer_from_passages
 from trussium_knowledge_agent.chat import TrussiumChatClient
 from trussium_knowledge_agent.embeddings import TrussiumEmbeddingsClient
@@ -78,6 +82,10 @@ def _parser() -> argparse.ArgumentParser:
         "evaluate-guidance", help="inspect guidance-review behavior on synthetic cases"
     )
     review_evaluate.add_argument("dataset", help="versioned guidance-review JSON dataset")
+    answer_evaluate = commands.add_parser(
+        "evaluate-answers", help="inspect generated answers against synthetic review cases"
+    )
+    answer_evaluate.add_argument("dataset", help="versioned answer-quality JSON dataset")
     remove = commands.add_parser("remove", help="remove one previously indexed source")
     remove.add_argument("source_root", help="path originally used to index the source")
     remove_by_id = commands.add_parser(
@@ -108,6 +116,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Run the indexing command and return a process exit status."""
     parser = _parser()
     arguments = parser.parse_args(argv)
+    if arguments.command == "evaluate-answers":
+        return _run_answer_quality_evaluation(parser, arguments.dataset)
     if arguments.command == "evaluate-guidance":
         return _run_guidance_review_evaluation(parser, arguments.dataset)
     database_url = os.environ.get("DATABASE_URL")
@@ -325,6 +335,52 @@ def _run_guidance_review_evaluation(parser: argparse.ArgumentParser, dataset_pat
         print(f"  citation agreement: {item.citations_agree}")
         print(f"  expected rationale: {item.case.rationale}")
         print(f"  assessment: {review.assessment}")
+    return 0
+
+
+def _run_answer_quality_evaluation(parser: argparse.ArgumentParser, dataset_path: str) -> int:
+    model = os.environ.get("TRUSSIUM_CHAT_MODEL", "").strip()
+    if not model or model == "replace-with-runtime-chat-model":
+        parser.error("TRUSSIUM_CHAT_MODEL must name a model enabled for chat")
+    base_url = os.environ.get("TRUSSIUM_URL", "http://127.0.0.1:9000")
+    api_key = os.environ.get("TRUSSIUM_API_KEY") or None
+    try:
+        timeout_seconds = float(os.environ.get("TRUSSIUM_TIMEOUT_SECONDS", "30"))
+        cases = load_answer_quality_cases(dataset_path)
+        with TrussiumChatClient(
+            base_url, api_key=api_key, timeout_seconds=timeout_seconds
+        ) as chat_client:
+            results = evaluate_answer_quality_cases(cases, chat_client, model)
+    except (RuntimeError, TypeError, ValueError) as error:
+        print(f"Error: {error}", file=sys.stderr)
+        return 1
+
+    print(f"Answer-quality cases: {len(results)} | chat model: {model}")
+    print("Manual review only; no aggregate score or pass threshold is calculated.")
+    for item in results:
+        case = item.case
+        print(f"\n{case.id}")
+        print(f"  question: {case.question}")
+        print(f"  expected status: {case.expected_status}")
+        print(f"  reference answer: {case.reference_answer}")
+        print(
+            f"  required points: {'; '.join(case.required_points) or '(none; abstention expected)'}"
+        )
+        print(f"  expected citations: {', '.join(case.expected_citations) or '(none)'}")
+        print(f"  rationale: {case.rationale}")
+        print(f"  observed status: {item.answer.status}")
+        print(f"  model answer: {item.answer.answer}")
+        print(f"  observed citations: {', '.join(item.cited_locations) or '(none)'}")
+        print("  reviewer checklist (record notes separately):")
+        print("    [ ] Each factual claim is supported by its cited evidence.")
+        print("    [ ] The answer covers the required points without unsupported additions.")
+        print("    [ ] Citation locations support the claims they accompany.")
+        print("    [ ] Answering or abstaining is appropriate for the supplied evidence.")
+        print("  supplied evidence:")
+        for passage in case.passages:
+            heading = " > ".join(passage.heading_path) or "Document"
+            print(f"    - {passage.relative_path}#{passage.heading_anchor} ({heading})")
+            print(f"      {passage.content}")
     return 0
 
 

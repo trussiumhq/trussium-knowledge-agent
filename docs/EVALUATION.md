@@ -91,6 +91,49 @@ agreement are prompts for human inspection, not calibrated quality measures;
 review divergences before changing prompts or confidence language. These small
 fixtures are illustrative and are not claimed to represent production corpora.
 
+## Generated answer-quality review
+
+The separate `fixtures/answer-quality-cases.json` dataset contains four fixed,
+synthetic question/evidence cases. They cover a multi-fact answer, selecting the
+supporting passage among a distractor, abstaining when evidence is irrelevant,
+and treating instruction-like text inside evidence as untrusted. Each case has
+human-authored required points, expected citations, a reference answer, and a
+rationale to guide inspection.
+
+Run the review with a reachable Trussium chat runtime and a configured chat
+model:
+
+```bash
+uv run --env-file .env trussium-knowledge-agent evaluate-answers fixtures/answer-quality-cases.json
+```
+
+This command uses only the fixed fixture passages; it does not read the index,
+connect to PostgreSQL, or call an embedding model. It makes one chat request for
+each case, so it requires a reachable runtime and may incur provider usage. The
+default runtime URL is `http://127.0.0.1:9000`; `TRUSSIUM_URL`,
+`TRUSSIUM_CHAT_MODEL`, and optional `TRUSSIUM_API_KEY` follow the same
+configuration as `ask`. Do not point it at an unapproved remote service.
+
+Only the synthetic case question and evidence should be sent. Do not replace
+the fixture with private or production documents. The evidence intentionally
+includes an instruction-like string in one case; this tests the existing
+untrusted-evidence boundary and is not permission to put secrets in prompts.
+
+For each case, compare the observed response with the reference answer and
+required points, then record reviewer notes alongside the runtime/model and
+date. Check that each factual claim is supported by the citation beside it,
+required facts are covered without unsupported additions, citation locations
+are accurate, and answering versus abstaining is appropriate. A reference
+answer is a review aid, not the sole valid wording.
+
+The command deliberately calculates no answer-quality score, agreement rate,
+or pass threshold. Its output varies with the chat model and runtime; use the
+same case version and record the model when comparing manual runs. Structural
+tests check dataset bounds and citation references, not semantic correctness.
+This review does not establish calibrated accuracy, answer truth, or production
+readiness. Retrieval metrics above remain separate and measure only retrieval
+and citation coverage.
+
 ## Recorded local reference run
 
 On 2026-10-07, the six-query fixture was indexed as 3 Markdown files and 6
